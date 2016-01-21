@@ -128,10 +128,9 @@ function TypedArrayCreate(constructor, arg0, arg1, arg2) {
   return newTypedArray;
 }
 
-function TypedArraySpeciesCreate(exemplar, arg0, arg1, arg2, conservative) {
+function TypedArraySpeciesCreate(exemplar, arg0, arg1, arg2) {
   var defaultConstructor = TypedArrayDefaultConstructor(exemplar);
-  var constructor = SpeciesConstructor(exemplar, defaultConstructor,
-                                       conservative);
+  var constructor = SpeciesConstructor(exemplar, defaultConstructor);
   return TypedArrayCreate(constructor, arg0, arg1, arg2);
 }
 
@@ -293,7 +292,7 @@ function NAMESubArray(begin, end) {
   var beginByteOffset =
       %_ArrayBufferViewGetByteOffset(this) + beginInt * ELEMENT_SIZE;
   return TypedArraySpeciesCreate(this, %TypedArrayGetBuffer(this),
-                                 beginByteOffset, newLength, true);
+                                 beginByteOffset, newLength);
 }
 endmacro
 
