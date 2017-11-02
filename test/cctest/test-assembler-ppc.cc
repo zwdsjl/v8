@@ -33,8 +33,8 @@
 #include "src/ppc/simulator-ppc.h"
 #include "test/cctest/cctest.h"
 
-using namespace v8::internal;
-
+namespace v8 {
+namespace internal {
 
 // Define these function prototypes to match JSEntryFunction in execution.cc.
 typedef Object* (*F1)(int x, int p1, int p2, int p3, int p4);
@@ -51,7 +51,7 @@ TEST(0) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   __ function_descriptor();
 
@@ -59,9 +59,9 @@ TEST(0) {
   __ blr();
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -79,7 +79,7 @@ TEST(1) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
   Label L, C;
 
   __ function_descriptor();
@@ -98,9 +98,9 @@ TEST(1) {
   __ blr();
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -117,7 +117,7 @@ TEST(2) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
   Label L, C;
 
   __ function_descriptor();
@@ -149,9 +149,9 @@ TEST(2) {
   __ mov(r0, Operand(0xFFF0FFFF));
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -175,7 +175,7 @@ TEST(3) {
   } T;
   T t;
 
-  Assembler assm(CcTest::i_isolate(), NULL, 0);
+  Assembler assm(CcTest::i_isolate(), nullptr, 0);
   Label L, C;
 
   __ function_descriptor();
@@ -222,9 +222,9 @@ TEST(3) {
   __ blr();
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -267,7 +267,7 @@ TEST(4) {
 
   // Create a function that accepts &t, and loads, manipulates, and stores
   // the doubles and floats.
-  Assembler assm(CcTest::i_isolate(), NULL, 0);
+  Assembler assm(CcTest::i_isolate(), nullptr, 0);
   Label L, C;
 
   if (CpuFeatures::IsSupported(VFP3)) {
@@ -335,10 +335,10 @@ TEST(4) {
     __ ldm(ia_w, sp, r4.bit() | fp.bit() | pc.bit());
 
     CodeDesc desc;
-    assm.GetCode(&desc);
+    assm.GetCode(isolate, &desc);
     Object* code = isolate->heap()->CreateCode(
         desc,
-        Code::ComputeFlags(Code::STUB),
+        Code::STUB,
         Handle<Code>())->ToObjectChecked();
     CHECK(code->IsCode());
 #ifdef DEBUG
@@ -383,7 +383,7 @@ TEST(5) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   if (CpuFeatures::IsSupported(ARMv7)) {
     CpuFeatures::Scope scope(ARMv7);
@@ -396,10 +396,10 @@ TEST(5) {
     __ mov(pc, Operand(lr));
 
     CodeDesc desc;
-    assm.GetCode(&desc);
+    assm.GetCode(isolate, &desc);
     Object* code = isolate->heap()->CreateCode(
         desc,
-        Code::ComputeFlags(Code::STUB),
+        Code::STUB,
         Handle<Code>())->ToObjectChecked();
     CHECK(code->IsCode());
 #ifdef DEBUG
@@ -420,7 +420,7 @@ TEST(6) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   if (CpuFeatures::IsSupported(ARMv7)) {
     CpuFeatures::Scope scope(ARMv7);
@@ -432,10 +432,10 @@ TEST(6) {
     __ mov(pc, Operand(lr));
 
     CodeDesc desc;
-    assm.GetCode(&desc);
+    assm.GetCode(isolate, &desc);
     Object* code = isolate->heap()->CreateCode(
         desc,
-        Code::ComputeFlags(Code::STUB),
+        Code::STUB,
         Handle<Code>())->ToObjectChecked();
     CHECK(code->IsCode());
 #ifdef DEBUG
@@ -463,7 +463,7 @@ static void TestRoundingMode(VCVTTypes types,
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   if (CpuFeatures::IsSupported(VFP3)) {
     CpuFeatures::Scope scope(VFP3);
@@ -508,10 +508,10 @@ static void TestRoundingMode(VCVTTypes types,
     __ mov(pc, Operand(lr));
 
     CodeDesc desc;
-    assm.GetCode(&desc);
+    assm.GetCode(isolate, &desc);
     Object* code = isolate->heap()->CreateCode(
         desc,
-        Code::ComputeFlags(Code::STUB),
+        Code::STUB,
         Handle<Code>())->ToObjectChecked();
     CHECK(code->IsCode());
 #ifdef DEBUG
@@ -668,7 +668,7 @@ TEST(8) {
 
   // Create a function that uses vldm/vstm to move some double and
   // single precision values around in memory.
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   if (CpuFeatures::IsSupported(VFP2)) {
     CpuFeatures::Scope scope(VFP2);
@@ -696,10 +696,10 @@ TEST(8) {
     __ ldm(ia_w, sp, r4.bit() | fp.bit() | pc.bit());
 
     CodeDesc desc;
-    assm.GetCode(&desc);
+    assm.GetCode(isolate, &desc);
     Object* code = isolate->heap()->CreateCode(
         desc,
-        Code::ComputeFlags(Code::STUB),
+        Code::STUB,
         Handle<Code>())->ToObjectChecked();
     CHECK(code->IsCode());
 #ifdef DEBUG
@@ -780,7 +780,7 @@ TEST(9) {
 
   // Create a function that uses vldm/vstm to move some double and
   // single precision values around in memory.
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   if (CpuFeatures::IsSupported(VFP2)) {
     CpuFeatures::Scope scope(VFP2);
@@ -812,10 +812,10 @@ TEST(9) {
     __ ldm(ia_w, sp, r4.bit() | fp.bit() | pc.bit());
 
     CodeDesc desc;
-    assm.GetCode(&desc);
+    assm.GetCode(isolate, &desc);
     Object* code = isolate->heap()->CreateCode(
         desc,
-        Code::ComputeFlags(Code::STUB),
+        Code::STUB,
         Handle<Code>())->ToObjectChecked();
     CHECK(code->IsCode());
 #ifdef DEBUG
@@ -896,7 +896,7 @@ TEST(10) {
 
   // Create a function that uses vldm/vstm to move some double and
   // single precision values around in memory.
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   if (CpuFeatures::IsSupported(VFP2)) {
     CpuFeatures::Scope scope(VFP2);
@@ -924,10 +924,10 @@ TEST(10) {
     __ ldm(ia_w, sp, r4.bit() | fp.bit() | pc.bit());
 
     CodeDesc desc;
-    assm.GetCode(&desc);
+    assm.GetCode(isolate, &desc);
     Object* code = isolate->heap()->CreateCode(
         desc,
-        Code::ComputeFlags(Code::STUB),
+        Code::STUB,
         Handle<Code>())->ToObjectChecked();
     CHECK(code->IsCode());
 #ifdef DEBUG
@@ -993,7 +993,7 @@ TEST(11) {
   i.a = 0xabcd0001;
   i.b = 0xabcd0000;
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   // Test HeapObject untagging.
   __ ldr(r1, MemOperand(r0, offsetof(I, a)));
@@ -1022,10 +1022,10 @@ TEST(11) {
   __ mov(pc, Operand(lr));
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(isolate, &desc);
   Object* code = isolate->heap()->CreateCode(
       desc,
-      Code::ComputeFlags(Code::STUB),
+      Code::STUB,
       Handle<Code>())->ToObjectChecked();
   CHECK(code->IsCode());
 #ifdef DEBUG
@@ -1048,7 +1048,7 @@ TEST(12) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
   Label target;
   __ b(eq, &target);
   __ b(ne, &target);
@@ -1058,3 +1058,6 @@ TEST(12) {
 #endif
 
 #undef __
+
+}  // namespace internal
+}  // namespace v8

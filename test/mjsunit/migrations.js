@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-ayle license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-object-observe
 // Flags: --allow-natives-syntax --track-fields --expose-gc
 
 var global = Function('return this')();
@@ -275,15 +274,11 @@ var migrations = [
     },
   },
   {
-    name: "observe",
-    migr: function(o, i) { Object.observe(o, function(){}); },
-  },
-  {
     name: "seal",
     migr: function(o, i) { Object.seal(o); },
   },
   { // Must be the last in the sequence, because after the global object freeze
-    // the other modifications does not make sence.
+    // the other modifications does not make sense.
     name: "freeze",
     migr: function(o, i) { Object.freeze(o); },
   },

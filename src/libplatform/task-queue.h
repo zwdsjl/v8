@@ -7,9 +7,11 @@
 
 #include <queue>
 
+#include "include/libplatform/libplatform-export.h"
 #include "src/base/macros.h"
 #include "src/base/platform/mutex.h"
 #include "src/base/platform/semaphore.h"
+#include "testing/gtest/include/gtest/gtest_prod.h"  // nogncheck
 
 namespace v8 {
 
@@ -17,7 +19,7 @@ class Task;
 
 namespace platform {
 
-class TaskQueue {
+class V8_PLATFORM_EXPORT TaskQueue {
  public:
   TaskQueue();
   ~TaskQueue();
@@ -26,15 +28,19 @@ class TaskQueue {
   void Append(Task* task);
 
   // Returns the next task to process. Blocks if no task is available. Returns
-  // NULL if the queue is terminated.
+  // nullptr if the queue is terminated.
   Task* GetNext();
 
   // Terminate the queue.
   void Terminate();
 
  private:
-  base::Mutex lock_;
+  FRIEND_TEST(WorkerThreadTest, PostSingleTask);
+
+  void BlockUntilQueueEmptyForTesting();
+
   base::Semaphore process_queue_semaphore_;
+  base::Mutex lock_;
   std::queue<Task*> task_queue_;
   bool terminated_;
 

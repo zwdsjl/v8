@@ -7,6 +7,7 @@
 
 #include "src/allocation.h"
 #include "src/assembler.h"
+#include "src/objects/js-regexp.h"
 #include "src/regexp/regexp-ast.h"
 #include "src/regexp/regexp-macro-assembler.h"
 
@@ -46,11 +47,9 @@ class RegExpImpl {
 
   // See ECMA-262 section 15.10.6.2.
   // This function calls the garbage collector if necessary.
-  MUST_USE_RESULT static MaybeHandle<Object> Exec(
-      Handle<JSRegExp> regexp,
-      Handle<String> subject,
-      int index,
-      Handle<JSArray> lastMatchInfo);
+  V8_EXPORT_PRIVATE MUST_USE_RESULT static MaybeHandle<Object> Exec(
+      Handle<JSRegExp> regexp, Handle<String> subject, int index,
+      Handle<RegExpMatchInfo> last_match_info);
 
   // Prepares a JSRegExp object with Irregexp-specific data.
   static void IrregexpInitialize(Handle<JSRegExp> re,
@@ -71,11 +70,9 @@ class RegExpImpl {
                          int32_t* output,
                          int output_size);
 
-
   static Handle<Object> AtomExec(Handle<JSRegExp> regexp,
-                                 Handle<String> subject,
-                                 int index,
-                                 Handle<JSArray> lastMatchInfo);
+                                 Handle<String> subject, int index,
+                                 Handle<RegExpMatchInfo> last_match_info);
 
   enum IrregexpResult { RE_FAILURE = 0, RE_SUCCESS = 1, RE_EXCEPTION = -1 };
 
@@ -106,17 +103,14 @@ class RegExpImpl {
   // captured positions.  On a failure, the result is the null value.
   // Returns an empty handle in case of an exception.
   MUST_USE_RESULT static MaybeHandle<Object> IrregexpExec(
-      Handle<JSRegExp> regexp,
-      Handle<String> subject,
-      int index,
-      Handle<JSArray> lastMatchInfo);
+      Handle<JSRegExp> regexp, Handle<String> subject, int index,
+      Handle<RegExpMatchInfo> last_match_info);
 
-  // Set last match info.  If match is NULL, then setting captures is omitted.
-  static Handle<JSArray> SetLastMatchInfo(Handle<JSArray> last_match_info,
-                                          Handle<String> subject,
-                                          int capture_count,
-                                          int32_t* match);
-
+  // Set last match info.  If match is nullptr, then setting captures is
+  // omitted.
+  static Handle<RegExpMatchInfo> SetLastMatchInfo(
+      Handle<RegExpMatchInfo> last_match_info, Handle<String> subject,
+      int capture_count, int32_t* match);
 
   class GlobalCache {
    public:
@@ -127,9 +121,9 @@ class RegExpImpl {
     INLINE(~GlobalCache());
 
     // Fetch the next entry in the cache for global regexp match results.
-    // This does not set the last match info.  Upon failure, NULL is returned.
-    // The cause can be checked with Result().  The previous
-    // result is still in available in memory when a failure happens.
+    // This does not set the last match info.  Upon failure, nullptr is
+    // returned. The cause can be checked with Result().  The previous result is
+    // still in available in memory when a failure happens.
     INLINE(int32_t* FetchNext());
 
     INLINE(int32_t* LastSuccessfulMatch());
@@ -150,52 +144,11 @@ class RegExpImpl {
     Handle<String> subject_;
   };
 
-
-  // Array index in the lastMatchInfo array.
-  static const int kLastCaptureCount = 0;
-  static const int kLastSubject = 1;
-  static const int kLastInput = 2;
-  static const int kFirstCapture = 3;
-  static const int kLastMatchOverhead = 3;
-
-  // Direct offset into the lastMatchInfo array.
-  static const int kLastCaptureCountOffset =
-      FixedArray::kHeaderSize + kLastCaptureCount * kPointerSize;
-  static const int kLastSubjectOffset =
-      FixedArray::kHeaderSize + kLastSubject * kPointerSize;
-  static const int kLastInputOffset =
-      FixedArray::kHeaderSize + kLastInput * kPointerSize;
-  static const int kFirstCaptureOffset =
-      FixedArray::kHeaderSize + kFirstCapture * kPointerSize;
-
-  // Used to access the lastMatchInfo array.
-  static int GetCapture(FixedArray* array, int index) {
-    return Smi::cast(array->get(index + kFirstCapture))->value();
-  }
-
-  static void SetLastCaptureCount(FixedArray* array, int to) {
-    array->set(kLastCaptureCount, Smi::FromInt(to));
-  }
-
-  static void SetLastSubject(FixedArray* array, String* to) {
-    array->set(kLastSubject, to);
-  }
-
-  static void SetLastInput(FixedArray* array, String* to) {
-    array->set(kLastInput, to);
-  }
-
-  static void SetCapture(FixedArray* array, int index, int to) {
-    array->set(index + kFirstCapture, Smi::FromInt(to));
-  }
-
-  static int GetLastCaptureCount(FixedArray* array) {
-    return Smi::cast(array->get(kLastCaptureCount))->value();
-  }
-
   // For acting on the JSRegExp data FixedArray.
   static int IrregexpMaxRegisterCount(FixedArray* re);
   static void SetIrregexpMaxRegisterCount(FixedArray* re, int value);
+  static void SetIrregexpCaptureNameMap(FixedArray* re,
+                                        Handle<FixedArray> value);
   static int IrregexpNumberOfCaptures(FixedArray* re);
   static int IrregexpNumberOfRegisters(FixedArray* re);
   static ByteArray* IrregexpByteCode(FixedArray* re, bool is_one_byte);
@@ -206,8 +159,8 @@ class RegExpImpl {
   // is not tracked, however.  As a conservative approximation we track the
   // total regexp code compiled including code that has subsequently been freed
   // and the total executable memory at any point.
-  static const int kRegExpExecutableMemoryLimit = 16 * MB;
-  static const int kRegExpCompiledLimit = 1 * MB;
+  static const size_t kRegExpExecutableMemoryLimit = 16 * MB;
+  static const size_t kRegExpCompiledLimit = 1 * MB;
   static const int kRegExpTooLargeToOptimize = 20 * KB;
 
  private:
@@ -233,7 +186,7 @@ enum ElementInSetsRelation {
 // integers (< 32).  May do zone-allocation.
 class OutSet: public ZoneObject {
  public:
-  OutSet() : first_(0), remaining_(NULL), successors_(NULL) { }
+  OutSet() : first_(0), remaining_(nullptr), successors_(nullptr) {}
   OutSet* Extend(unsigned value, Zone* zone);
   bool Get(unsigned value) const;
   static const unsigned kFirstLimit = 32;
@@ -250,7 +203,7 @@ class OutSet: public ZoneObject {
   ZoneList<OutSet*>* successors(Zone* zone) { return successors_; }
 
   OutSet(uint32_t first, ZoneList<unsigned>* remaining)
-      : first_(first), remaining_(remaining), successors_(NULL) { }
+      : first_(first), remaining_(remaining), successors_(nullptr) {}
   uint32_t first_;
   ZoneList<unsigned>* remaining_;
   ZoneList<OutSet*>* successors_;
@@ -266,7 +219,7 @@ class DispatchTable : public ZoneObject {
 
   class Entry {
    public:
-    Entry() : from_(0), to_(0), out_set_(NULL) { }
+    Entry() : from_(0), to_(0), out_set_(nullptr) {}
     Entry(uc32 from, uc32 to, OutSet* out_set)
         : from_(from), to_(to), out_set_(out_set) {
       DCHECK(from <= to);
@@ -455,8 +408,8 @@ class QuickCheckDetails {
   int characters() { return characters_; }
   void set_characters(int characters) { characters_ = characters; }
   Position* positions(int index) {
-    DCHECK(index >= 0);
-    DCHECK(index < characters_);
+    DCHECK_LE(0, index);
+    DCHECK_GT(characters_, index);
     return positions_ + index;
   }
   uint32_t mask() { return mask_; }
@@ -482,8 +435,11 @@ extern int kUninitializedRegExpNodePlaceHolder;
 class RegExpNode: public ZoneObject {
  public:
   explicit RegExpNode(Zone* zone)
-      : replacement_(NULL), on_work_list_(false), trace_count_(0), zone_(zone) {
-    bm_info_[0] = bm_info_[1] = NULL;
+      : replacement_(nullptr),
+        on_work_list_(false),
+        trace_count_(0),
+        zone_(zone) {
+    bm_info_[0] = bm_info_[1] = nullptr;
   }
   virtual ~RegExpNode();
   virtual void Accept(NodeVisitor* visitor) = 0;
@@ -521,7 +477,7 @@ class RegExpNode: public ZoneObject {
   // character and that has no guards on it.
   virtual RegExpNode* GetSuccessorOfOmnivorousTextNode(
       RegExpCompiler* compiler) {
-    return NULL;
+    return nullptr;
   }
 
   // Collects information on the possible code units (mod 128) that can match if
@@ -538,7 +494,7 @@ class RegExpNode: public ZoneObject {
 
   // If we know that the input is one-byte then there are some nodes that can
   // never match.  This method returns a node that can be substituted for
-  // itself, or NULL if the node can never match.
+  // itself, or nullptr if the node can never match.
   virtual RegExpNode* FilterOneByte(int depth, bool ignore_case) {
     return this;
   }
@@ -922,7 +878,8 @@ class Guard: public ZoneObject {
 
 class GuardedAlternative {
  public:
-  explicit GuardedAlternative(RegExpNode* node) : node_(node), guards_(NULL) { }
+  explicit GuardedAlternative(RegExpNode* node)
+      : node_(node), guards_(nullptr) {}
   void AddGuard(Guard* guard, Zone* zone);
   RegExpNode* node() { return node_; }
   void set_node(RegExpNode* node) { node_ = node; }
@@ -941,11 +898,11 @@ class ChoiceNode: public RegExpNode {
  public:
   explicit ChoiceNode(int expected_size, Zone* zone)
       : RegExpNode(zone),
-        alternatives_(new(zone)
-                      ZoneList<GuardedAlternative>(expected_size, zone)),
-        table_(NULL),
+        alternatives_(new (zone)
+                          ZoneList<GuardedAlternative>(expected_size, zone)),
+        table_(nullptr),
         not_at_start_(false),
-        being_calculated_(false) { }
+        being_calculated_(false) {}
   virtual void Accept(NodeVisitor* visitor);
   void AddAlternative(GuardedAlternative node) {
     alternatives()->Add(node, zone());
@@ -1052,8 +1009,8 @@ class LoopChoiceNode: public ChoiceNode {
  public:
   LoopChoiceNode(bool body_can_be_zero_length, bool read_backward, Zone* zone)
       : ChoiceNode(2, zone),
-        loop_node_(NULL),
-        continue_node_(NULL),
+        loop_node_(nullptr),
+        continue_node_(nullptr),
         body_can_be_zero_length_(body_can_be_zero_length),
         read_backward_(read_backward) {}
   void AddLoopAlternative(GuardedAlternative alt);
@@ -1250,7 +1207,7 @@ class Trace {
   class DeferredAction {
    public:
     DeferredAction(ActionNode::ActionType action_type, int reg)
-        : action_type_(action_type), reg_(reg), next_(NULL) { }
+        : action_type_(action_type), reg_(reg), next_(nullptr) {}
     DeferredAction* next() { return next_; }
     bool Mentions(int reg);
     int reg() { return reg_; }
@@ -1304,14 +1261,14 @@ class Trace {
 
   Trace()
       : cp_offset_(0),
-        actions_(NULL),
-        backtrack_(NULL),
-        stop_node_(NULL),
-        loop_label_(NULL),
+        actions_(nullptr),
+        backtrack_(nullptr),
+        stop_node_(nullptr),
+        loop_label_(nullptr),
         characters_preloaded_(0),
         bound_checked_up_to_(0),
         flush_budget_(100),
-        at_start_(UNKNOWN) { }
+        at_start_(UNKNOWN) {}
 
   // End the trace.  This involves flushing the deferred actions in the trace
   // and pushing a backtrack location onto the backtrack stack.  Once this is
@@ -1331,13 +1288,9 @@ class Trace {
   // a trivial trace is recorded in a label in the node so that gotos can be
   // generated to that code.
   bool is_trivial() {
-    return backtrack_ == NULL &&
-           actions_ == NULL &&
-           cp_offset_ == 0 &&
-           characters_preloaded_ == 0 &&
-           bound_checked_up_to_ == 0 &&
-           quick_check_performed_.characters() == 0 &&
-           at_start_ == UNKNOWN;
+    return backtrack_ == nullptr && actions_ == nullptr && cp_offset_ == 0 &&
+           characters_preloaded_ == 0 && bound_checked_up_to_ == 0 &&
+           quick_check_performed_.characters() == 0 && at_start_ == UNKNOWN;
   }
   TriBool at_start() { return at_start_; }
   void set_at_start(TriBool at_start) { at_start_ = at_start; }
@@ -1356,7 +1309,7 @@ class Trace {
   // These set methods and AdvanceCurrentPositionInTrace should be used only on
   // new traces - the intention is that traces are immutable after creation.
   void add_action(DeferredAction* new_action) {
-    DCHECK(new_action->next_ == NULL);
+    DCHECK(new_action->next_ == nullptr);
     new_action->next_ = actions_;
     actions_ = new_action;
   }
@@ -1486,7 +1439,7 @@ class Analysis: public NodeVisitor {
       : isolate_(isolate),
         flags_(flags),
         is_one_byte_(is_one_byte),
-        error_message_(NULL) {}
+        error_message_(nullptr) {}
   void EnsureAnalyzed(RegExpNode* node);
 
 #define DECLARE_VISIT(Type)                                          \
@@ -1495,9 +1448,9 @@ FOR_EACH_NODE_TYPE(DECLARE_VISIT)
 #undef DECLARE_VISIT
   virtual void VisitLoopChoice(LoopChoiceNode* that);
 
-  bool has_failed() { return error_message_ != NULL; }
+  bool has_failed() { return error_message_ != nullptr; }
   const char* error_message() {
-    DCHECK(error_message_ != NULL);
+    DCHECK(error_message_ != nullptr);
     return error_message_;
   }
   void fail(const char* error_message) {
@@ -1521,15 +1474,16 @@ FOR_EACH_NODE_TYPE(DECLARE_VISIT)
 
 struct RegExpCompileData {
   RegExpCompileData()
-    : tree(NULL),
-      node(NULL),
-      simple(true),
-      contains_anchor(false),
-      capture_count(0) { }
+      : tree(nullptr),
+        node(nullptr),
+        simple(true),
+        contains_anchor(false),
+        capture_count(0) {}
   RegExpTree* tree;
   RegExpNode* node;
   bool simple;
   bool contains_anchor;
+  Handle<FixedArray> capture_name_map;
   Handle<String> error;
   int capture_count;
 };
@@ -1543,7 +1497,7 @@ class RegExpEngine: public AllStatic {
           code(isolate->heap()->the_hole_value()),
           num_registers(0) {}
     CompilationResult(Object* code, int registers)
-        : error_message(NULL), code(code), num_registers(registers) {}
+        : error_message(nullptr), code(code), num_registers(registers) {}
     const char* error_message;
     Object* code;
     int num_registers;

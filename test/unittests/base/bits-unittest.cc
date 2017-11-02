@@ -19,27 +19,27 @@ namespace base {
 namespace bits {
 
 TEST(Bits, CountPopulation32) {
-  EXPECT_EQ(0u, CountPopulation32(0));
-  EXPECT_EQ(1u, CountPopulation32(1));
-  EXPECT_EQ(8u, CountPopulation32(0x11111111));
-  EXPECT_EQ(16u, CountPopulation32(0xf0f0f0f0));
-  EXPECT_EQ(24u, CountPopulation32(0xfff0f0ff));
-  EXPECT_EQ(32u, CountPopulation32(0xffffffff));
+  EXPECT_EQ(0u, CountPopulation(uint32_t{0}));
+  EXPECT_EQ(1u, CountPopulation(uint32_t{1}));
+  EXPECT_EQ(8u, CountPopulation(uint32_t{0x11111111}));
+  EXPECT_EQ(16u, CountPopulation(uint32_t{0xf0f0f0f0}));
+  EXPECT_EQ(24u, CountPopulation(uint32_t{0xfff0f0ff}));
+  EXPECT_EQ(32u, CountPopulation(uint32_t{0xffffffff}));
 }
 
 
 TEST(Bits, CountPopulation64) {
-  EXPECT_EQ(0u, CountPopulation64(0));
-  EXPECT_EQ(1u, CountPopulation64(1));
-  EXPECT_EQ(2u, CountPopulation64(0x8000000000000001));
-  EXPECT_EQ(8u, CountPopulation64(0x11111111));
-  EXPECT_EQ(16u, CountPopulation64(0xf0f0f0f0));
-  EXPECT_EQ(24u, CountPopulation64(0xfff0f0ff));
-  EXPECT_EQ(32u, CountPopulation64(0xffffffff));
-  EXPECT_EQ(16u, CountPopulation64(0x1111111111111111));
-  EXPECT_EQ(32u, CountPopulation64(0xf0f0f0f0f0f0f0f0));
-  EXPECT_EQ(48u, CountPopulation64(0xfff0f0fffff0f0ff));
-  EXPECT_EQ(64u, CountPopulation64(0xffffffffffffffff));
+  EXPECT_EQ(0u, CountPopulation(uint64_t{0}));
+  EXPECT_EQ(1u, CountPopulation(uint64_t{1}));
+  EXPECT_EQ(2u, CountPopulation(uint64_t{0x8000000000000001}));
+  EXPECT_EQ(8u, CountPopulation(uint64_t{0x11111111}));
+  EXPECT_EQ(16u, CountPopulation(uint64_t{0xf0f0f0f0}));
+  EXPECT_EQ(24u, CountPopulation(uint64_t{0xfff0f0ff}));
+  EXPECT_EQ(32u, CountPopulation(uint64_t{0xffffffff}));
+  EXPECT_EQ(16u, CountPopulation(uint64_t{0x1111111111111111}));
+  EXPECT_EQ(32u, CountPopulation(uint64_t{0xf0f0f0f0f0f0f0f0}));
+  EXPECT_EQ(48u, CountPopulation(uint64_t{0xfff0f0fffff0f0ff}));
+  EXPECT_EQ(64u, CountPopulation(uint64_t{0xffffffffffffffff}));
 }
 
 
@@ -86,30 +86,30 @@ TEST(Bits, CountTrailingZeros64) {
 
 
 TEST(Bits, IsPowerOfTwo32) {
-  EXPECT_FALSE(IsPowerOfTwo32(0U));
+  EXPECT_FALSE(IsPowerOfTwo(0U));
   TRACED_FORRANGE(uint32_t, shift, 0, 31) {
-    EXPECT_TRUE(IsPowerOfTwo32(1U << shift));
-    EXPECT_FALSE(IsPowerOfTwo32((1U << shift) + 5U));
-    EXPECT_FALSE(IsPowerOfTwo32(~(1U << shift)));
+    EXPECT_TRUE(IsPowerOfTwo(1U << shift));
+    EXPECT_FALSE(IsPowerOfTwo((1U << shift) + 5U));
+    EXPECT_FALSE(IsPowerOfTwo(~(1U << shift)));
   }
   TRACED_FORRANGE(uint32_t, shift, 2, 31) {
-    EXPECT_FALSE(IsPowerOfTwo32((1U << shift) - 1U));
+    EXPECT_FALSE(IsPowerOfTwo((1U << shift) - 1U));
   }
-  EXPECT_FALSE(IsPowerOfTwo32(0xffffffff));
+  EXPECT_FALSE(IsPowerOfTwo(0xffffffff));
 }
 
 
 TEST(Bits, IsPowerOfTwo64) {
-  EXPECT_FALSE(IsPowerOfTwo64(0U));
+  EXPECT_FALSE(IsPowerOfTwo(V8_UINT64_C(0)));
   TRACED_FORRANGE(uint32_t, shift, 0, 63) {
-    EXPECT_TRUE(IsPowerOfTwo64(V8_UINT64_C(1) << shift));
-    EXPECT_FALSE(IsPowerOfTwo64((V8_UINT64_C(1) << shift) + 5U));
-    EXPECT_FALSE(IsPowerOfTwo64(~(V8_UINT64_C(1) << shift)));
+    EXPECT_TRUE(IsPowerOfTwo(V8_UINT64_C(1) << shift));
+    EXPECT_FALSE(IsPowerOfTwo((V8_UINT64_C(1) << shift) + 5U));
+    EXPECT_FALSE(IsPowerOfTwo(~(V8_UINT64_C(1) << shift)));
   }
   TRACED_FORRANGE(uint32_t, shift, 2, 63) {
-    EXPECT_FALSE(IsPowerOfTwo64((V8_UINT64_C(1) << shift) - 1U));
+    EXPECT_FALSE(IsPowerOfTwo((V8_UINT64_C(1) << shift) - 1U));
   }
-  EXPECT_FALSE(IsPowerOfTwo64(V8_UINT64_C(0xffffffffffffffff)));
+  EXPECT_FALSE(IsPowerOfTwo(V8_UINT64_C(0xffffffffffffffff)));
 }
 
 
@@ -117,7 +117,8 @@ TEST(Bits, RoundUpToPowerOfTwo32) {
   TRACED_FORRANGE(uint32_t, shift, 0, 31) {
     EXPECT_EQ(1u << shift, RoundUpToPowerOfTwo32(1u << shift));
   }
-  EXPECT_EQ(0u, RoundUpToPowerOfTwo32(0));
+  EXPECT_EQ(1u, RoundUpToPowerOfTwo32(0));
+  EXPECT_EQ(1u, RoundUpToPowerOfTwo32(1));
   EXPECT_EQ(4u, RoundUpToPowerOfTwo32(3));
   EXPECT_EQ(0x80000000u, RoundUpToPowerOfTwo32(0x7fffffffu));
 }
@@ -125,7 +126,24 @@ TEST(Bits, RoundUpToPowerOfTwo32) {
 
 TEST(BitsDeathTest, DISABLE_IN_RELEASE(RoundUpToPowerOfTwo32)) {
   ASSERT_DEATH_IF_SUPPORTED({ RoundUpToPowerOfTwo32(0x80000001u); },
-                            "0x80000000");
+                            ".*heck failed:.* << 31");
+}
+
+TEST(Bits, RoundUpToPowerOfTwo64) {
+  TRACED_FORRANGE(uint64_t, shift, 0, 63) {
+    uint64_t value = uint64_t{1} << shift;
+    EXPECT_EQ(value, RoundUpToPowerOfTwo64(value));
+  }
+  EXPECT_EQ(uint64_t{1}, RoundUpToPowerOfTwo64(0));
+  EXPECT_EQ(uint64_t{1}, RoundUpToPowerOfTwo64(1));
+  EXPECT_EQ(uint64_t{4}, RoundUpToPowerOfTwo64(3));
+  EXPECT_EQ(uint64_t{1} << 63, RoundUpToPowerOfTwo64((uint64_t{1} << 63) - 1));
+  EXPECT_EQ(uint64_t{1} << 63, RoundUpToPowerOfTwo64(uint64_t{1} << 63));
+}
+
+TEST(BitsDeathTest, DISABLE_IN_RELEASE(RoundUpToPowerOfTwo64)) {
+  ASSERT_DEATH_IF_SUPPORTED({ RoundUpToPowerOfTwo64((uint64_t{1} << 63) + 1); },
+                            ".*heck failed:.* << 63");
 }
 
 

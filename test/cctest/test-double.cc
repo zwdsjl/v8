@@ -34,9 +34,8 @@
 #include "src/double.h"
 #include "test/cctest/cctest.h"
 
-
-using namespace v8::internal;
-
+namespace v8 {
+namespace internal {
 
 TEST(Uint64Conversions) {
   // Start by checking the byte-order.
@@ -62,7 +61,7 @@ TEST(AsDiyFp) {
   diy_fp = Double(min_double64).AsDiyFp();
   CHECK_EQ(-0x3FF - 52 + 1, diy_fp.e());
   // This is a denormal; so no hidden bit.
-  CHECK(1 == diy_fp.f());  // NOLINT
+  CHECK_EQ(1, diy_fp.f());
 
   uint64_t max_double64 = V8_2PART_UINT64_C(0x7fefffff, ffffffff);
   diy_fp = Double(max_double64).AsDiyFp();
@@ -229,3 +228,6 @@ TEST(NextDouble) {
   CHECK_EQ(V8_INFINITY,
            Double(V8_2PART_UINT64_C(0x7fefffff, ffffffff)).NextDouble());
 }
+
+}  // namespace internal
+}  // namespace v8

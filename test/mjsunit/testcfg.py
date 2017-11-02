@@ -33,6 +33,7 @@ from testrunner.objects import testcase
 
 FLAGS_PATTERN = re.compile(r"//\s+Flags:(.*)")
 FILES_PATTERN = re.compile(r"//\s+Files:(.*)")
+ENV_PATTERN = re.compile(r"//\s+Environment Variables:(.*)")
 SELF_SCRIPT_PATTERN = re.compile(r"//\s+Env: TEST_FILE_NAME")
 MODULE_PATTERN = re.compile(r"^// MODULE$", flags=re.MULTILINE)
 NO_HARNESS_PATTERN = re.compile(r"^// NO HARNESS$", flags=re.MULTILINE)
@@ -59,9 +60,9 @@ class MjsunitTestSuite(testsuite.TestSuite):
           tests.append(test)
     return tests
 
-  def GetFlagsForTestCase(self, testcase, context):
+  def GetParametersForTestCase(self, testcase, context):
+    flags = testcase.flags + context.mode_flags
     source = self.GetSourceForTest(testcase)
-    flags = [] + context.mode_flags
     flags_match = re.findall(FLAGS_PATTERN, source)
     for match in flags_match:
       flags += match.strip().split()
@@ -89,12 +90,19 @@ class MjsunitTestSuite(testsuite.TestSuite):
       files.append("--module")
     files.append(testfilename)
 
-    flags += files
+    all_files = []
+    all_files += files
     if context.isolates:
-      flags.append("--isolate")
-      flags += files
+      all_files.append("--isolate")
+      all_files += files
 
-    return testcase.flags + flags
+    env_match = ENV_PATTERN.search(source)
+    if env_match:
+      for env_pair in env_match.group(1).strip().split():
+        var, value = env_pair.split('=')
+        testcase.env[var] = value
+
+    return all_files, flags
 
   def GetSourceForTest(self, testcase):
     filename = os.path.join(self.root, testcase.path + self.suffix())

@@ -29,42 +29,29 @@
 
 #include <stdlib.h>
 
-#include "src/v8.h"
-
+#include "include/v8-profiler.h"
 #include "src/api.h"
-#include "src/codegen.h"
+#include "src/code-stubs.h"
 #include "src/disassembler.h"
 #include "src/isolate.h"
 #include "src/log.h"
-#include "src/profiler/sampler.h"
+#include "src/objects-inl.h"
+#include "src/v8.h"
 #include "src/vm-state-inl.h"
 #include "test/cctest/cctest.h"
 #include "test/cctest/trace-extension.h"
 
-using v8::Function;
-using v8::Local;
-using v8::Object;
-using v8::Script;
-using v8::String;
-using v8::Value;
+namespace v8 {
+namespace internal {
 
-using v8::internal::byte;
-using v8::internal::Address;
-using v8::internal::Handle;
-using v8::internal::Isolate;
-using v8::internal::JSFunction;
-using v8::internal::TickSample;
-
-
-static bool IsAddressWithinFuncCode(JSFunction* function, Address addr) {
+static bool IsAddressWithinFuncCode(JSFunction* function, void* addr) {
+  Address address = reinterpret_cast<Address>(addr);
   i::AbstractCode* code = function->abstract_code();
-  return code->contains(addr);
+  return code->contains(address);
 }
 
-
 static bool IsAddressWithinFuncCode(v8::Local<v8::Context> context,
-                                    const char* func_name,
-                                    Address addr) {
+                                    const char* func_name, void* addr) {
   v8::Local<v8::Value> func =
       context->Global()->Get(context, v8_str(func_name)).ToLocalChecked();
   CHECK(func->IsFunction());
@@ -79,13 +66,13 @@ static bool IsAddressWithinFuncCode(v8::Local<v8::Context> context,
 static void construct_call(const v8::FunctionCallbackInfo<v8::Value>& args) {
   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(args.GetIsolate());
   i::StackFrameIterator frame_iterator(isolate);
-  CHECK(frame_iterator.frame()->is_exit());
+  CHECK(frame_iterator.frame()->is_exit() ||
+        frame_iterator.frame()->is_builtin_exit());
   frame_iterator.Advance();
   CHECK(frame_iterator.frame()->is_construct());
   frame_iterator.Advance();
-  if (i::FLAG_ignition) {
+  if (frame_iterator.frame()->type() == i::StackFrame::STUB) {
     // Skip over bytecode handler frame.
-    CHECK(frame_iterator.frame()->type() == i::StackFrame::STUB);
     frame_iterator.Advance();
   }
   i::StackFrame* calling_frame = frame_iterator.frame();
@@ -152,7 +139,6 @@ static void CreateTraceCallerFunction(v8::Local<v8::Context> context,
 TEST(CFromJSStackTrace) {
   // BUG(1303) Inlining of JSFuncDoTrace() in JSTrace below breaks this test.
   i::FLAG_turbo_inlining = false;
-  i::FLAG_use_inlining = false;
 
   TickSample sample;
   i::TraceExtension::InitTraceEnv(&sample);
@@ -202,7 +188,6 @@ TEST(PureJSStackTrace) {
   // This test does not pass with inlining enabled since inlined functions
   // don't appear in the stack trace.
   i::FLAG_turbo_inlining = false;
-  i::FLAG_use_inlining = false;
 
   TickSample sample;
   i::TraceExtension::InitTraceEnv(&sample);
@@ -298,3 +283,6 @@ TEST(JsEntrySp) {
   CompileRun("js_entry_sp_level2();");
   CHECK(!i::TraceExtension::GetJsEntrySp());
 }
+
+}  // namespace internal
+}  // namespace v8

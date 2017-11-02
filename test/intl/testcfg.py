@@ -26,10 +26,12 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+import re
 
 from testrunner.local import testsuite
 from testrunner.objects import testcase
 
+FLAGS_PATTERN = re.compile(r"//\s+Flags:(.*)")
 
 class IntlTestSuite(testsuite.TestSuite):
 
@@ -45,7 +47,8 @@ class IntlTestSuite(testsuite.TestSuite):
       files.sort()
       for filename in files:
         if (filename.endswith(".js") and filename != "assert.js" and
-            filename != "utils.js"):
+            filename != "utils.js" and filename != "regexp-assert.js" and
+            filename != "regexp-prepare.js"):
           fullpath = os.path.join(dirname, filename)
           relpath = fullpath[len(self.root) + 1 : -3]
           testname = relpath.replace(os.path.sep, "/")
@@ -53,21 +56,32 @@ class IntlTestSuite(testsuite.TestSuite):
           tests.append(test)
     return tests
 
-  def GetFlagsForTestCase(self, testcase, context):
-    flags = ["--allow-natives-syntax"] + context.mode_flags
+  def GetParametersForTestCase(self, testcase, context):
+    source = self.GetSourceForTest(testcase)
+    flags = testcase.flags + ["--allow-natives-syntax"] + context.mode_flags
+    flags_match = re.findall(FLAGS_PATTERN, source)
+    for match in flags_match:
+      flags += match.strip().split()
 
     files = []
     files.append(os.path.join(self.root, "assert.js"))
     files.append(os.path.join(self.root, "utils.js"))
+    files.append(os.path.join(self.root, "regexp-prepare.js"))
     files.append(os.path.join(self.root, testcase.path + self.suffix()))
+    files.append(os.path.join(self.root, "regexp-assert.js"))
 
-    flags += files
+    all_files = []
+    all_files += files
     if context.isolates:
-      flags.append("--isolate")
-      flags += files
+      all_files.append("--isolate")
+      all_files += files
 
-    return testcase.flags + flags
+    return all_files, flags
 
+  def GetSourceForTest(self, testcase):
+    filename = os.path.join(self.root, testcase.path + self.suffix())
+    with open(filename) as f:
+      return f.read()
 
 def GetSuite(name, root):
   return IntlTestSuite(name, root)

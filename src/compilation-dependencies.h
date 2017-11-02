@@ -7,6 +7,8 @@
 
 #include "src/handles.h"
 #include "src/objects.h"
+#include "src/objects/map.h"
+#include "src/zone/zone-containers.h"
 
 namespace v8 {
 namespace internal {
@@ -28,8 +30,8 @@ class CompilationDependencies {
   void AssumeInitialMapCantChange(Handle<Map> map) {
     Insert(DependentCode::kInitialMapChangedGroup, map);
   }
-  void AssumeFieldType(Handle<Map> map) {
-    Insert(DependentCode::kFieldTypeGroup, map);
+  void AssumeFieldOwner(Handle<Map> map) {
+    Insert(DependentCode::kFieldOwnerGroup, map);
   }
   void AssumeMapStable(Handle<Map> map);
   void AssumePrototypeMapsStable(
@@ -61,9 +63,9 @@ class CompilationDependencies {
   Zone* zone_;
   Handle<Foreign> object_wrapper_;
   bool aborted_;
-  ZoneList<Handle<HeapObject> >* groups_[DependentCode::kGroupCount];
+  ZoneVector<Handle<HeapObject> >* groups_[DependentCode::kGroupCount];
 
-  DependentCode* Get(Handle<Object> object);
+  DependentCode* Get(Handle<Object> object) const;
   void Set(Handle<Object> object, Handle<DependentCode> dep);
 };
 }  // namespace internal

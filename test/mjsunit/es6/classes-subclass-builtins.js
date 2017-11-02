@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --allow-natives-syntax --harmony-regexp-subclass
-// Flags: --expose-gc
+// Flags: --allow-natives-syntax --expose-gc
 
 "use strict";
 
@@ -919,7 +918,12 @@ function TestMapSetSubclassing(container, is_map) {
 
   var o = Reflect.construct(RegExp, [pattern], f);
   assertEquals(["match", "tostring"], log);
-  assertEquals(/biep/, o);
+  // TODO(littledan): Is the RegExp constructor correct to create
+  // the internal slots and do these type checks this way?
+  assertThrows(() => Object.getOwnPropertyDescriptor(RegExp.prototype,
+                                                     'source').get(o),
+               TypeError);
+  assertEquals("/undefined/undefined", RegExp.prototype.toString.call(o));
   assertTrue(o.__proto__ === p2);
   assertTrue(f.prototype === p3);
 })();

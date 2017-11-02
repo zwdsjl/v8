@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+(function() {
 "use strict";
 
 // A more universal stringify that supports more types than JSON.
@@ -36,11 +37,13 @@ function Stringify(x, depth) {
     case "boolean":
     case "number":
     case "function":
+    case "symbol":
       return x.toString();
     case "string":
       return "\"" + x.toString() + "\"";
-    case "symbol":
-      return x.toString();
+    case "bigint":
+      // TODO(neis): Use x.toString() once we have it.
+      return String(x) + "n";
     case "object":
       if (IS_NULL(x)) return "null";
       if (x.constructor && x.constructor.name === "Array") {
@@ -89,3 +92,6 @@ function StringifyProxy(proxy, depth) {
   }
   return '[' + proxy_type + ' Proxy ' + Stringify(info_object, depth-1) + ']';
 }
+
+return Stringify;
+})();

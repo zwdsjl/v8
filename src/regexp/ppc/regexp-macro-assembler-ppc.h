@@ -7,7 +7,6 @@
 
 #include "src/macro-assembler.h"
 #include "src/ppc/assembler-ppc.h"
-#include "src/ppc/frames-ppc.h"
 #include "src/regexp/regexp-macro-assembler.h"
 
 namespace v8 {
@@ -78,7 +77,6 @@ class RegExpMacroAssemblerPPC : public NativeRegExpMacroAssembler {
   virtual void WriteCurrentPositionToRegister(int reg, int cp_offset);
   virtual void ClearRegisters(int reg_from, int reg_to);
   virtual void WriteStackPointerToRegister(int reg);
-  virtual bool CanReadUnaligned();
 
   // Called from RegExp if the stack-guard is triggered.
   // If the code object is relocated, the return address is fixed before
@@ -97,9 +95,8 @@ class RegExpMacroAssemblerPPC : public NativeRegExpMacroAssembler {
   static const int kReturnAddress = kStoredRegisters + 7 * kPointerSize;
   static const int kCallerFrame = kReturnAddress + kPointerSize;
   // Stack parameters placed by caller.
-  static const int kSecondaryReturnAddress =
+  static const int kIsolate =
       kCallerFrame + kStackFrameExtraParamSlot * kPointerSize;
-  static const int kIsolate = kSecondaryReturnAddress + kPointerSize;
 
   // Below the frame pointer.
   // Register parameters stored by setup code.
@@ -163,7 +160,7 @@ class RegExpMacroAssemblerPPC : public NativeRegExpMacroAssembler {
   inline int char_size() { return static_cast<int>(mode_); }
 
   // Equivalent to a conditional branch to the label, unless the label
-  // is NULL, in which case it is a conditional Backtrack.
+  // is nullptr, in which case it is a conditional Backtrack.
   void BranchOrBacktrack(Condition condition, Label* to, CRegister cr = cr7);
 
   // Call and return internally in the generated code in a way that

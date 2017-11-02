@@ -5,19 +5,19 @@
 #include <vector>
 
 #include "src/globals.h"
-#include "src/heap/heap.h"
-#include "src/heap/spaces.h"
+#include "src/heap/heap-inl.h"
 #include "src/heap/spaces-inl.h"
+#include "src/objects.h"
 #include "test/cctest/cctest.h"
 
 namespace v8 {
 namespace internal {
+namespace heap {
 
 static Address AllocateLabBackingStore(Heap* heap, intptr_t size_in_bytes) {
   AllocationResult result = heap->old_space()->AllocateRaw(
       static_cast<int>(size_in_bytes), kDoubleAligned);
-  Object* obj = result.ToObjectChecked();
-  Address adr = HeapObject::cast(obj)->address();
+  Address adr = result.ToObjectChecked()->address();
   return adr;
 }
 
@@ -170,7 +170,7 @@ TEST(MergeSuccessful) {
   CcTest::InitializeVM();
   Heap* heap = CcTest::heap();
   const int kLabSize = 2 * KB;
-  Address base1 = AllocateLabBackingStore(heap, kLabSize);
+  Address base1 = AllocateLabBackingStore(heap, 2 * kLabSize);
   Address limit1 = base1 + kLabSize;
   Address base2 = limit1;
   Address limit2 = base2 + kLabSize;
@@ -226,7 +226,7 @@ TEST(MergeFailed) {
   CcTest::InitializeVM();
   Heap* heap = CcTest::heap();
   const int kLabSize = 2 * KB;
-  Address base1 = AllocateLabBackingStore(heap, kLabSize);
+  Address base1 = AllocateLabBackingStore(heap, 3 * kLabSize);
   Address base2 = base1 + kLabSize;
   Address base3 = base2 + kLabSize;
 
@@ -281,5 +281,6 @@ TEST(AllocateAligned) {
 }
 #endif  // V8_HOST_ARCH_32_BIT
 
+}  // namespace heap
 }  // namespace internal
 }  // namespace v8

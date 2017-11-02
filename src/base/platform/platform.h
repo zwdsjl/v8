@@ -25,7 +25,9 @@
 #include <string>
 #include <vector>
 
+#include "src/base/base-export.h"
 #include "src/base/build_config.h"
+#include "src/base/compiler-specific.h"
 #include "src/base/platform/mutex.h"
 #include "src/base/platform/semaphore.h"
 
@@ -54,12 +56,13 @@ inline intptr_t InternalGetExistingThreadLocal(intptr_t index) {
   const intptr_t kMaxSlots = kMaxInlineSlots + 1024;
   const intptr_t kPointerSize = sizeof(void*);
   DCHECK(0 <= index && index < kMaxSlots);
+  USE(kMaxSlots);
   if (index < kMaxInlineSlots) {
     return static_cast<intptr_t>(__readfsdword(kTibInlineTlsOffset +
                                                kPointerSize * index));
   }
   intptr_t extra = static_cast<intptr_t>(__readfsdword(kTibExtraTlsOffset));
-  DCHECK(extra != 0);
+  DCHECK_NE(extra, 0);
   return *reinterpret_cast<intptr_t*>(extra +
                                       kPointerSize * (index - kMaxInlineSlots));
 }
@@ -68,7 +71,7 @@ inline intptr_t InternalGetExistingThreadLocal(intptr_t index) {
 
 #define V8_FAST_TLS_SUPPORTED 1
 
-extern intptr_t kMacTlsBaseOffset;
+extern V8_BASE_EXPORT intptr_t kMacTlsBaseOffset;
 
 INLINE(intptr_t InternalGetExistingThreadLocal(intptr_t index));
 
@@ -101,14 +104,13 @@ class TimezoneCache;
 // functions. Add methods here to cope with differences between the
 // supported platforms.
 
-class OS {
+class V8_BASE_EXPORT OS {
  public:
   // Initialize the OS class.
   // - random_seed: Used for the GetRandomMmapAddress() if non-zero.
   // - hard_abort: If true, OS::Abort() will crash instead of aborting.
   // - gc_fake_mmap: Name of the file for fake gc mmap used in ll_prof.
-  static void Initialize(int64_t random_seed,
-                         bool hard_abort,
+  static void Initialize(int64_t random_seed, bool hard_abort,
                          const char* const gc_fake_mmap);
 
   // Returns the accumulated user time for thread. This routine
@@ -122,19 +124,6 @@ class OS {
   static double TimeCurrentMillis();
 
   static TimezoneCache* CreateTimezoneCache();
-  static void DisposeTimezoneCache(TimezoneCache* cache);
-  static void ClearTimezoneCache(TimezoneCache* cache);
-
-  // Returns a string identifying the current time zone. The
-  // timestamp is used for determining if DST is in effect.
-  static const char* LocalTimezone(double time, TimezoneCache* cache);
-
-  // Returns the local time offset in milliseconds east of UTC without
-  // taking daylight savings time into account.
-  static double LocalTimeOffset(TimezoneCache* cache);
-
-  // Returns the daylight savings offset for the given time.
-  static double DaylightSavingsOffset(double time, TimezoneCache* cache);
 
   // Returns last OS error.
   static int GetLastError();
@@ -154,36 +143,52 @@ class OS {
   // Print output to console. This is mostly used for debugging output.
   // On platforms that has standard terminal output, the output
   // should go to stdout.
-  static void Print(const char* format, ...);
-  static void VPrint(const char* format, va_list args);
+  static PRINTF_FORMAT(1, 2) void Print(const char* format, ...);
+  static PRINTF_FORMAT(1, 0) void VPrint(const char* format, va_list args);
 
   // Print output to a file. This is mostly used for debugging output.
-  static void FPrint(FILE* out, const char* format, ...);
-  static void VFPrint(FILE* out, const char* format, va_list args);
+  static PRINTF_FORMAT(2, 3) void FPrint(FILE* out, const char* format, ...);
+  static PRINTF_FORMAT(2, 0) void VFPrint(FILE* out, const char* format,
+                                          va_list args);
 
   // Print error output to console. This is mostly used for error message
   // output. On platforms that has standard terminal output, the output
   // should go to stderr.
-  static void PrintError(const char* format, ...);
-  static void VPrintError(const char* format, va_list args);
+  static PRINTF_FORMAT(1, 2) void PrintError(const char* format, ...);
+  static PRINTF_FORMAT(1, 0) void VPrintError(const char* format, va_list args);
 
+  // Memory access permissions. Only the modes currently used by V8 are listed
+  // here even though most systems support additional modes.
+  enum class MemoryPermission { kNoAccess, kReadWrite, kReadWriteExecute };
+
+  // Allocate/Free memory used by JS heap. Permissions are set according to the
+  // is_* flags. Returns the address of allocated memory, or nullptr if failed.
+  static void* Allocate(const size_t requested, size_t* allocated,
+                        MemoryPermission access, void* hint = nullptr);
   // Allocate/Free memory used by JS heap. Pages are readable/writable, but
   // they are not guaranteed to be executable unless 'executable' is true.
-  // Returns the address of allocated memory, or NULL if failed.
-  static void* Allocate(const size_t requested,
-                        size_t* allocated,
-                        bool is_executable);
+  // Returns the address of allocated memory, or nullptr if failed.
+  static void* Allocate(const size_t requested, size_t* allocated,
+                        bool is_executable, void* hint = nullptr);
   static void Free(void* address, const size_t size);
 
-  // This is the granularity at which the ProtectCode(...) call can set page
-  // permissions.
+  // Allocates a region of memory that is inaccessible. On Windows this reserves
+  // but does not commit the memory. On POSIX systems it allocates memory as
+  // PROT_NONE, which also prevents it from being committed.
+  static void* AllocateGuarded(const size_t requested);
+
+  // This is the granularity at which the SetReadAndExecutable(...) call can
+  // set page permissions.
   static intptr_t CommitPageSize();
 
-  // Mark code segments non-writable.
-  static void ProtectCode(void* address, const size_t size);
+  // Mark a region of memory executable and readable but not writable.
+  static void SetReadAndExecutable(void* address, const size_t size);
 
   // Assign memory as a guard page so that access will cause an exception.
   static void Guard(void* address, const size_t size);
+
+  // Make a region of memory non-executable but readable and writable.
+  static void SetReadAndWritable(void* address, const size_t size, bool commit);
 
   // Generate a random address to be used for hinting mmap().
   static void* GetRandomMmapAddr();
@@ -191,11 +196,27 @@ class OS {
   // Get the Alignment guaranteed by Allocate().
   static size_t AllocateAlignment();
 
+  static void* ReserveRegion(size_t size, void* hint);
+
+  static void* ReserveAlignedRegion(size_t size, size_t alignment, void* hint,
+                                    size_t* allocated);
+
+  static bool CommitRegion(void* address, size_t size, bool is_executable);
+
+  static bool UncommitRegion(void* address, size_t size);
+
+  static bool ReleaseRegion(void* address, size_t size);
+
+  // Release part of a reserved address range.
+  static bool ReleasePartialRegion(void* address, size_t size);
+
+  static bool HasLazyCommits();
+
   // Sleep for a specified time interval.
   static void Sleep(TimeDelta interval);
 
   // Abort the current process.
-  V8_NORETURN static void Abort();
+  [[noreturn]] static void Abort();
 
   // Debug break.
   static void DebugBreak();
@@ -209,7 +230,7 @@ class OS {
     char text[kStackWalkMaxTextLen];
   };
 
-  class MemoryMappedFile {
+  class V8_BASE_EXPORT MemoryMappedFile {
    public:
     virtual ~MemoryMappedFile() {}
     virtual void* memory() const = 0;
@@ -222,25 +243,31 @@ class OS {
 
   // Safe formatting print. Ensures that str is always null-terminated.
   // Returns the number of chars written, or -1 if output was truncated.
-  static int SNPrintF(char* str, int length, const char* format, ...);
-  static int VSNPrintF(char* str,
-                       int length,
-                       const char* format,
-                       va_list args);
+  static PRINTF_FORMAT(3, 4) int SNPrintF(char* str, int length,
+                                          const char* format, ...);
+  static PRINTF_FORMAT(3, 0) int VSNPrintF(char* str, int length,
+                                           const char* format, va_list args);
 
   static char* StrChr(char* str, int c);
   static void StrNCpy(char* dest, int length, const char* src, size_t n);
 
   // Support for the profiler.  Can do nothing, in which case ticks
-  // occuring in shared libraries will not be properly accounted for.
+  // occurring in shared libraries will not be properly accounted for.
   struct SharedLibraryAddress {
-    SharedLibraryAddress(
-        const std::string& library_path, uintptr_t start, uintptr_t end)
-        : library_path(library_path), start(start), end(end) {}
+    SharedLibraryAddress(const std::string& library_path, uintptr_t start,
+                         uintptr_t end)
+        : library_path(library_path), start(start), end(end), aslr_slide(0) {}
+    SharedLibraryAddress(const std::string& library_path, uintptr_t start,
+                         uintptr_t end, intptr_t aslr_slide)
+        : library_path(library_path),
+          start(start),
+          end(end),
+          aslr_slide(aslr_slide) {}
 
     std::string library_path;
     uintptr_t start;
     uintptr_t end;
+    intptr_t aslr_slide;
   };
 
   static std::vector<SharedLibraryAddress> GetSharedLibraryAddresses();
@@ -273,108 +300,6 @@ class OS {
   DISALLOW_IMPLICIT_CONSTRUCTORS(OS);
 };
 
-
-// Represents and controls an area of reserved memory.
-// Control of the reserved memory can be assigned to another VirtualMemory
-// object by assignment or copy-contructing. This removes the reserved memory
-// from the original object.
-class VirtualMemory {
- public:
-  // Empty VirtualMemory object, controlling no reserved memory.
-  VirtualMemory();
-
-  // Reserves virtual memory with size.
-  explicit VirtualMemory(size_t size);
-
-  // Reserves virtual memory containing an area of the given size that
-  // is aligned per alignment. This may not be at the position returned
-  // by address().
-  VirtualMemory(size_t size, size_t alignment);
-
-  // Releases the reserved memory, if any, controlled by this VirtualMemory
-  // object.
-  ~VirtualMemory();
-
-  // Returns whether the memory has been reserved.
-  bool IsReserved();
-
-  // Initialize or resets an embedded VirtualMemory object.
-  void Reset();
-
-  // Returns the start address of the reserved memory.
-  // If the memory was reserved with an alignment, this address is not
-  // necessarily aligned. The user might need to round it up to a multiple of
-  // the alignment to get the start of the aligned block.
-  void* address() {
-    DCHECK(IsReserved());
-    return address_;
-  }
-
-  // Returns the size of the reserved memory. The returned value is only
-  // meaningful when IsReserved() returns true.
-  // If the memory was reserved with an alignment, this size may be larger
-  // than the requested size.
-  size_t size() { return size_; }
-
-  // Commits real memory. Returns whether the operation succeeded.
-  bool Commit(void* address, size_t size, bool is_executable);
-
-  // Uncommit real memory.  Returns whether the operation succeeded.
-  bool Uncommit(void* address, size_t size);
-
-  // Creates a single guard page at the given address.
-  bool Guard(void* address);
-
-  void Release() {
-    DCHECK(IsReserved());
-    // Notice: Order is important here. The VirtualMemory object might live
-    // inside the allocated region.
-    void* address = address_;
-    size_t size = size_;
-    CHECK(InVM(address, size));
-    Reset();
-    bool result = ReleaseRegion(address, size);
-    USE(result);
-    DCHECK(result);
-  }
-
-  // Assign control of the reserved region to a different VirtualMemory object.
-  // The old object is no longer functional (IsReserved() returns false).
-  void TakeControl(VirtualMemory* from) {
-    DCHECK(!IsReserved());
-    address_ = from->address_;
-    size_ = from->size_;
-    from->Reset();
-  }
-
-  static void* ReserveRegion(size_t size);
-
-  static bool CommitRegion(void* base, size_t size, bool is_executable);
-
-  static bool UncommitRegion(void* base, size_t size);
-
-  // Must be called with a base pointer that has been returned by ReserveRegion
-  // and the same size it was reserved with.
-  static bool ReleaseRegion(void* base, size_t size);
-
-  // Returns true if OS performs lazy commits, i.e. the memory allocation call
-  // defers actual physical memory allocation till the first memory access.
-  // Otherwise returns false.
-  static bool HasLazyCommits();
-
- private:
-  bool InVM(void* address, size_t size) {
-    return (reinterpret_cast<uintptr_t>(address_) <=
-            reinterpret_cast<uintptr_t>(address)) &&
-           ((reinterpret_cast<uintptr_t>(address_) + size_) >=
-            (reinterpret_cast<uintptr_t>(address) + size));
-  }
-
-  void* address_;  // Start address of the virtual memory.
-  size_t size_;  // Size of the virtual memory.
-};
-
-
 // ----------------------------------------------------------------------------
 // Thread
 //
@@ -383,7 +308,7 @@ class VirtualMemory {
 // thread. The Thread object should not be deallocated before the thread has
 // terminated.
 
-class Thread {
+class V8_BASE_EXPORT Thread {
  public:
   // Opaque data type for thread-local storage keys.
   typedef int32_t LocalStorageKey;
@@ -415,7 +340,7 @@ class Thread {
     Start();
     start_semaphore_->Wait();
     delete start_semaphore_;
-    start_semaphore_ = NULL;
+    start_semaphore_ = nullptr;
   }
 
   // Wait until thread terminates.
@@ -440,7 +365,7 @@ class Thread {
     SetThreadLocal(key, reinterpret_cast<void*>(static_cast<intptr_t>(value)));
   }
   static bool HasThreadLocal(LocalStorageKey key) {
-    return GetThreadLocal(key) != NULL;
+    return GetThreadLocal(key) != nullptr;
   }
 
 #ifdef V8_FAST_TLS_SUPPORTED

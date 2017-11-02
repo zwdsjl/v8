@@ -2,22 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/assembler.h"
+#include "src/assembler-inl.h"
 #include "src/macro-assembler.h"
 
 #include "src/compiler/linkage.h"
 
-#include "src/zone.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
 namespace compiler {
 
 namespace {
-LinkageLocation regloc(Register reg) {
-  return LinkageLocation::ForRegister(reg.code());
-}
-
 
 // Platform-specific configuration for C calling convention.
 #if V8_TARGET_ARCH_IA32
@@ -49,12 +45,6 @@ LinkageLocation regloc(Register reg) {
 #define CALLEE_SAVE_REGISTERS \
   rbx.bit() | r12.bit() | r13.bit() | r14.bit() | r15.bit()
 #endif
-
-#elif V8_TARGET_ARCH_X87
-// ===========================================================================
-// == x87 ====================================================================
-// ===========================================================================
-#define CALLEE_SAVE_REGISTERS esi.bit() | edi.bit() | ebx.bit()
 
 #elif V8_TARGET_ARCH_ARM
 // ===========================================================================
@@ -155,11 +145,13 @@ LinkageLocation regloc(Register reg) {
 // General code uses the above configuration data.
 CallDescriptor* Linkage::GetSimplifiedCDescriptor(
     Zone* zone, const MachineSignature* msig, bool set_initialize_root_flag) {
+  DCHECK_LE(msig->parameter_count(), static_cast<size_t>(kMaxCParameters));
+
   LocationSignature::Builder locations(zone, msig->return_count(),
                                        msig->parameter_count());
   // Check the types of the signature.
   // Currently no floating point parameters or returns are allowed because
-  // on x87 and ia32, the FP top of stack is involved.
+  // on ia32, the FP top of stack is involved.
   for (size_t i = 0; i < msig->return_count(); i++) {
     MachineRepresentation rep = msig->GetReturn(i).representation();
     CHECK_NE(MachineRepresentation::kFloat32, rep);
@@ -179,24 +171,25 @@ CallDescriptor* Linkage::GetSimplifiedCDescriptor(
 #endif
 
   // Add return location(s).
-  CHECK(locations.return_count_ <= 2);
+  CHECK_GE(2, locations.return_count_);
 
   if (locations.return_count_ > 0) {
-    locations.AddReturn(regloc(kReturnRegister0));
+    locations.AddReturn(LinkageLocation::ForRegister(kReturnRegister0.code(),
+                                                     msig->GetReturn(0)));
   }
   if (locations.return_count_ > 1) {
-    locations.AddReturn(regloc(kReturnRegister1));
+    locations.AddReturn(LinkageLocation::ForRegister(kReturnRegister1.code(),
+                                                     msig->GetReturn(1)));
   }
 
   const int parameter_count = static_cast<int>(msig->parameter_count());
 
 #ifdef PARAM_REGISTERS
-  static const Register kParamRegisters[] = {PARAM_REGISTERS};
-  static const int kParamRegisterCount =
-      static_cast<int>(arraysize(kParamRegisters));
+  const v8::internal::Register kParamRegisters[] = {PARAM_REGISTERS};
+  const int kParamRegisterCount = static_cast<int>(arraysize(kParamRegisters));
 #else
-  static const Register* kParamRegisters = nullptr;
-  static const int kParamRegisterCount = 0;
+  const v8::internal::Register* kParamRegisters = nullptr;
+  const int kParamRegisterCount = 0;
 #endif
 
 #ifdef STACK_SHADOW_WORDS
@@ -207,10 +200,11 @@ CallDescriptor* Linkage::GetSimplifiedCDescriptor(
   // Add register and/or stack parameter(s).
   for (int i = 0; i < parameter_count; i++) {
     if (i < kParamRegisterCount) {
-      locations.AddParam(regloc(kParamRegisters[i]));
+      locations.AddParam(LinkageLocation::ForRegister(kParamRegisters[i].code(),
+                                                      msig->GetParam(i)));
     } else {
-      locations.AddParam(
-          LinkageLocation::ForCallerFrameSlot(-1 - stack_offset));
+      locations.AddParam(LinkageLocation::ForCallerFrameSlot(
+          -1 - stack_offset, msig->GetParam(i)));
       stack_offset++;
     }
   }
@@ -229,21 +223,22 @@ CallDescriptor* Linkage::GetSimplifiedCDescriptor(
 
   // The target for C calls is always an address (i.e. machine pointer).
   MachineType target_type = MachineType::Pointer();
-  LinkageLocation target_loc = LinkageLocation::ForAnyRegister();
+  LinkageLocation target_loc = LinkageLocation::ForAnyRegister(target_type);
+  CallDescriptor::Flags flags = CallDescriptor::kUseNativeStack;
+  if (set_initialize_root_flag) {
+    flags |= CallDescriptor::kInitializeRootRegister;
+  }
+
   return new (zone) CallDescriptor(  // --
       CallDescriptor::kCallAddress,  // kind
       target_type,                   // target MachineType
       target_loc,                    // target location
-      msig,                          // machine_sig
       locations.Build(),             // location_sig
       0,                             // stack_parameter_count
-      Operator::kNoProperties,       // properties
+      Operator::kNoThrow,            // properties
       kCalleeSaveRegisters,          // callee-saved registers
       kCalleeSaveFPRegisters,        // callee-saved fp regs
-      set_initialize_root_flag ?     // flags
-          CallDescriptor::kInitializeRootRegister
-                               : CallDescriptor::kNoFlags,
-      "c-call");
+      flags, "c-call");
 }
 
 }  // namespace compiler

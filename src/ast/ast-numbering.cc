@@ -6,409 +6,277 @@
 
 #include "src/ast/ast.h"
 #include "src/ast/scopes.h"
+#include "src/compiler.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
 
-class AstNumberingVisitor final : public AstVisitor {
+class AstNumberingVisitor final : public AstVisitor<AstNumberingVisitor> {
  public:
-  AstNumberingVisitor(Isolate* isolate, Zone* zone)
-      : AstVisitor(),
-        isolate_(isolate),
-        zone_(zone),
-        next_id_(BailoutId::FirstUsable().ToInt()),
-        properties_(zone),
-        slot_cache_(zone),
+  AstNumberingVisitor(uintptr_t stack_limit, Zone* zone,
+                      Compiler::EagerInnerFunctionLiterals* eager_literals)
+      : zone_(zone),
+        eager_literals_(eager_literals),
+        suspend_count_(0),
         dont_optimize_reason_(kNoReason) {
-    InitializeAstVisitor(isolate);
+    InitializeAstVisitor(stack_limit);
   }
 
   bool Renumber(FunctionLiteral* node);
 
  private:
 // AST node visitor interface.
-#define DEFINE_VISIT(type) void Visit##type(type* node) override;
+#define DEFINE_VISIT(type) void Visit##type(type* node);
   AST_NODE_LIST(DEFINE_VISIT)
 #undef DEFINE_VISIT
 
-  bool Finish(FunctionLiteral* node);
+  void VisitSuspend(Suspend* node);
 
-  void VisitVariableProxyReference(VariableProxy* node);
-  void VisitPropertyReference(Property* node);
-  void VisitReference(Expression* expr);
-
-  void VisitStatements(ZoneList<Statement*>* statements) override;
-  void VisitDeclarations(ZoneList<Declaration*>* declarations) override;
+  void VisitStatementsAndDeclarations(Block* node);
+  void VisitStatements(ZoneList<Statement*>* statements);
+  void VisitDeclarations(Declaration::List* declarations);
   void VisitArguments(ZoneList<Expression*>* arguments);
-  void VisitObjectLiteralProperty(ObjectLiteralProperty* property);
+  void VisitLiteralProperty(LiteralProperty* property);
 
-  int ReserveIdRange(int n) {
-    int tmp = next_id_;
-    next_id_ += n;
-    return tmp;
-  }
-
-  void IncrementNodeCount() { properties_.add_node_count(1); }
-  void DisableSelfOptimization() {
-    properties_.flags() |= AstProperties::kDontSelfOptimize;
-  }
   void DisableOptimization(BailoutReason reason) {
     dont_optimize_reason_ = reason;
-    DisableSelfOptimization();
-  }
-  void DisableCrankshaft(BailoutReason reason) {
-    if (FLAG_turbo_shipping) {
-      properties_.flags() |= AstProperties::kDontCrankshaft;
-    } else {
-      dont_optimize_reason_ = reason;
-      DisableSelfOptimization();
-    }
-  }
-
-  template <typename Node>
-  void ReserveFeedbackSlots(Node* node) {
-    node->AssignFeedbackVectorSlots(isolate_, properties_.get_spec(),
-                                    &slot_cache_);
   }
 
   BailoutReason dont_optimize_reason() const { return dont_optimize_reason_; }
 
-  Isolate* isolate_;
+  Zone* zone() const { return zone_; }
+
   Zone* zone_;
-  int next_id_;
-  AstProperties properties_;
-  // The slot cache allows us to reuse certain feedback vector slots.
-  FeedbackVectorSlotCache slot_cache_;
+  Compiler::EagerInnerFunctionLiterals* eager_literals_;
+  int suspend_count_;
+  FunctionKind function_kind_;
   BailoutReason dont_optimize_reason_;
 
   DEFINE_AST_VISITOR_SUBCLASS_MEMBERS();
   DISALLOW_COPY_AND_ASSIGN(AstNumberingVisitor);
 };
 
-
 void AstNumberingVisitor::VisitVariableDeclaration(VariableDeclaration* node) {
-  IncrementNodeCount();
   VisitVariableProxy(node->proxy());
 }
-
-
-void AstNumberingVisitor::VisitExportDeclaration(ExportDeclaration* node) {
-  IncrementNodeCount();
-  DisableOptimization(kExportDeclaration);
-  VisitVariableProxy(node->proxy());
-}
-
 
 void AstNumberingVisitor::VisitEmptyStatement(EmptyStatement* node) {
-  IncrementNodeCount();
 }
-
 
 void AstNumberingVisitor::VisitSloppyBlockFunctionStatement(
     SloppyBlockFunctionStatement* node) {
-  IncrementNodeCount();
   Visit(node->statement());
 }
 
-
 void AstNumberingVisitor::VisitContinueStatement(ContinueStatement* node) {
-  IncrementNodeCount();
 }
-
 
 void AstNumberingVisitor::VisitBreakStatement(BreakStatement* node) {
-  IncrementNodeCount();
 }
-
 
 void AstNumberingVisitor::VisitDebuggerStatement(DebuggerStatement* node) {
-  IncrementNodeCount();
-  DisableOptimization(kDebuggerStatement);
-  node->set_base_id(ReserveIdRange(DebuggerStatement::num_ids()));
 }
-
 
 void AstNumberingVisitor::VisitNativeFunctionLiteral(
     NativeFunctionLiteral* node) {
-  IncrementNodeCount();
   DisableOptimization(kNativeFunctionLiteral);
-  node->set_base_id(ReserveIdRange(NativeFunctionLiteral::num_ids()));
 }
 
-
 void AstNumberingVisitor::VisitDoExpression(DoExpression* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(DoExpression::num_ids()));
   Visit(node->block());
   Visit(node->result());
 }
 
-
 void AstNumberingVisitor::VisitLiteral(Literal* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(Literal::num_ids()));
 }
-
 
 void AstNumberingVisitor::VisitRegExpLiteral(RegExpLiteral* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(RegExpLiteral::num_ids()));
 }
-
-
-void AstNumberingVisitor::VisitVariableProxyReference(VariableProxy* node) {
-  IncrementNodeCount();
-  if (node->var()->IsLookupSlot()) {
-    DisableCrankshaft(kReferenceToAVariableWhichRequiresDynamicLookup);
-  }
-  node->set_base_id(ReserveIdRange(VariableProxy::num_ids()));
-}
-
 
 void AstNumberingVisitor::VisitVariableProxy(VariableProxy* node) {
-  VisitVariableProxyReference(node);
-  ReserveFeedbackSlots(node);
 }
-
 
 void AstNumberingVisitor::VisitThisFunction(ThisFunction* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(ThisFunction::num_ids()));
 }
-
 
 void AstNumberingVisitor::VisitSuperPropertyReference(
     SuperPropertyReference* node) {
-  IncrementNodeCount();
-  DisableCrankshaft(kSuperReference);
-  node->set_base_id(ReserveIdRange(SuperPropertyReference::num_ids()));
   Visit(node->this_var());
   Visit(node->home_object());
 }
 
-
 void AstNumberingVisitor::VisitSuperCallReference(SuperCallReference* node) {
-  IncrementNodeCount();
-  DisableCrankshaft(kSuperReference);
-  node->set_base_id(ReserveIdRange(SuperCallReference::num_ids()));
   Visit(node->this_var());
   Visit(node->new_target_var());
   Visit(node->this_function_var());
 }
 
-
-void AstNumberingVisitor::VisitImportDeclaration(ImportDeclaration* node) {
-  IncrementNodeCount();
-  DisableOptimization(kImportDeclaration);
-  VisitVariableProxy(node->proxy());
-}
-
-
 void AstNumberingVisitor::VisitExpressionStatement(ExpressionStatement* node) {
-  IncrementNodeCount();
   Visit(node->expression());
 }
-
 
 void AstNumberingVisitor::VisitReturnStatement(ReturnStatement* node) {
-  IncrementNodeCount();
   Visit(node->expression());
 }
 
-
-void AstNumberingVisitor::VisitYield(Yield* node) {
-  IncrementNodeCount();
-  DisableOptimization(kYield);
-  ReserveFeedbackSlots(node);
-  node->set_base_id(ReserveIdRange(Yield::num_ids()));
-  Visit(node->generator_object());
+void AstNumberingVisitor::VisitSuspend(Suspend* node) {
+  node->set_suspend_id(suspend_count_);
+  suspend_count_++;
   Visit(node->expression());
 }
 
+void AstNumberingVisitor::VisitYield(Yield* node) { VisitSuspend(node); }
+
+void AstNumberingVisitor::VisitYieldStar(YieldStar* node) {
+  node->set_suspend_id(suspend_count_++);
+  if (IsAsyncGeneratorFunction(function_kind_)) {
+    node->set_await_iterator_close_suspend_id(suspend_count_++);
+    node->set_await_delegated_iterator_output_suspend_id(suspend_count_++);
+  }
+  Visit(node->expression());
+}
+
+void AstNumberingVisitor::VisitAwait(Await* node) { VisitSuspend(node); }
 
 void AstNumberingVisitor::VisitThrow(Throw* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(Throw::num_ids()));
   Visit(node->exception());
 }
 
-
 void AstNumberingVisitor::VisitUnaryOperation(UnaryOperation* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(UnaryOperation::num_ids()));
   Visit(node->expression());
 }
-
 
 void AstNumberingVisitor::VisitCountOperation(CountOperation* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(CountOperation::num_ids()));
   Visit(node->expression());
-  ReserveFeedbackSlots(node);
 }
 
-
 void AstNumberingVisitor::VisitBlock(Block* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(Block::num_ids()));
-  if (node->scope() != NULL) VisitDeclarations(node->scope()->declarations());
+  VisitStatementsAndDeclarations(node);
+}
+
+void AstNumberingVisitor::VisitStatementsAndDeclarations(Block* node) {
+  Scope* scope = node->scope();
+  DCHECK(scope == nullptr || !scope->HasBeenRemoved());
+  if (scope) VisitDeclarations(scope->declarations());
   VisitStatements(node->statements());
 }
 
-
 void AstNumberingVisitor::VisitFunctionDeclaration(FunctionDeclaration* node) {
-  IncrementNodeCount();
   VisitVariableProxy(node->proxy());
   VisitFunctionLiteral(node->fun());
 }
 
-
 void AstNumberingVisitor::VisitCallRuntime(CallRuntime* node) {
-  IncrementNodeCount();
-  ReserveFeedbackSlots(node);
-  node->set_base_id(ReserveIdRange(CallRuntime::num_ids()));
   VisitArguments(node->arguments());
 }
 
-
 void AstNumberingVisitor::VisitWithStatement(WithStatement* node) {
-  IncrementNodeCount();
-  DisableCrankshaft(kWithStatement);
-  node->set_base_id(ReserveIdRange(WithStatement::num_ids()));
   Visit(node->expression());
   Visit(node->statement());
 }
 
-
 void AstNumberingVisitor::VisitDoWhileStatement(DoWhileStatement* node) {
-  IncrementNodeCount();
-  DisableSelfOptimization();
-  node->set_base_id(ReserveIdRange(DoWhileStatement::num_ids()));
+  node->set_first_suspend_id(suspend_count_);
   Visit(node->body());
   Visit(node->cond());
+  node->set_suspend_count(suspend_count_ - node->first_suspend_id());
 }
-
 
 void AstNumberingVisitor::VisitWhileStatement(WhileStatement* node) {
-  IncrementNodeCount();
-  DisableSelfOptimization();
-  node->set_base_id(ReserveIdRange(WhileStatement::num_ids()));
+  node->set_first_suspend_id(suspend_count_);
   Visit(node->cond());
   Visit(node->body());
+  node->set_suspend_count(suspend_count_ - node->first_suspend_id());
 }
 
-
 void AstNumberingVisitor::VisitTryCatchStatement(TryCatchStatement* node) {
-  IncrementNodeCount();
-  DisableOptimization(kTryCatchStatement);
+  DCHECK(node->scope() == nullptr || !node->scope()->HasBeenRemoved());
   Visit(node->try_block());
   Visit(node->catch_block());
 }
 
-
 void AstNumberingVisitor::VisitTryFinallyStatement(TryFinallyStatement* node) {
-  IncrementNodeCount();
-  DisableOptimization(kTryFinallyStatement);
   Visit(node->try_block());
   Visit(node->finally_block());
 }
 
-
-void AstNumberingVisitor::VisitPropertyReference(Property* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(Property::num_ids()));
+void AstNumberingVisitor::VisitProperty(Property* node) {
   Visit(node->key());
   Visit(node->obj());
 }
 
+void AstNumberingVisitor::VisitAssignment(Assignment* node) {
+  Visit(node->target());
+  Visit(node->value());
+}
 
-void AstNumberingVisitor::VisitReference(Expression* expr) {
-  DCHECK(expr->IsProperty() || expr->IsVariableProxy());
-  if (expr->IsProperty()) {
-    VisitPropertyReference(expr->AsProperty());
-  } else {
-    VisitVariableProxyReference(expr->AsVariableProxy());
+void AstNumberingVisitor::VisitCompoundAssignment(CompoundAssignment* node) {
+  VisitBinaryOperation(node->binary_operation());
+  VisitAssignment(node);
+}
+
+void AstNumberingVisitor::VisitBinaryOperation(BinaryOperation* node) {
+  Visit(node->left());
+  Visit(node->right());
+}
+
+void AstNumberingVisitor::VisitNaryOperation(NaryOperation* node) {
+  Visit(node->first());
+  for (size_t i = 0; i < node->subsequent_length(); ++i) {
+    Visit(node->subsequent(i));
   }
 }
 
-
-void AstNumberingVisitor::VisitProperty(Property* node) {
-  VisitPropertyReference(node);
-  ReserveFeedbackSlots(node);
-}
-
-
-void AstNumberingVisitor::VisitAssignment(Assignment* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(Assignment::num_ids()));
-
-  if (node->is_compound()) VisitBinaryOperation(node->binary_operation());
-  VisitReference(node->target());
-  Visit(node->value());
-  ReserveFeedbackSlots(node);
-}
-
-
-void AstNumberingVisitor::VisitBinaryOperation(BinaryOperation* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(BinaryOperation::num_ids()));
-  Visit(node->left());
-  Visit(node->right());
-}
-
-
 void AstNumberingVisitor::VisitCompareOperation(CompareOperation* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(CompareOperation::num_ids()));
   Visit(node->left());
   Visit(node->right());
 }
 
-
-void AstNumberingVisitor::VisitSpread(Spread* node) { UNREACHABLE(); }
-
+void AstNumberingVisitor::VisitSpread(Spread* node) {
+  Visit(node->expression());
+}
 
 void AstNumberingVisitor::VisitEmptyParentheses(EmptyParentheses* node) {
   UNREACHABLE();
 }
 
-
-void AstNumberingVisitor::VisitForInStatement(ForInStatement* node) {
-  IncrementNodeCount();
-  DisableSelfOptimization();
-  node->set_base_id(ReserveIdRange(ForInStatement::num_ids()));
-  Visit(node->each());
-  Visit(node->enumerable());
-  Visit(node->body());
-  ReserveFeedbackSlots(node);
+void AstNumberingVisitor::VisitGetIterator(GetIterator* node) {
+  Visit(node->iterable());
 }
 
+void AstNumberingVisitor::VisitGetTemplateObject(GetTemplateObject* node) {}
+
+void AstNumberingVisitor::VisitImportCallExpression(
+    ImportCallExpression* node) {
+  Visit(node->argument());
+}
+
+void AstNumberingVisitor::VisitForInStatement(ForInStatement* node) {
+  Visit(node->enumerable());  // Not part of loop.
+  node->set_first_suspend_id(suspend_count_);
+  Visit(node->each());
+  Visit(node->body());
+  node->set_suspend_count(suspend_count_ - node->first_suspend_id());
+}
 
 void AstNumberingVisitor::VisitForOfStatement(ForOfStatement* node) {
-  IncrementNodeCount();
-  DisableCrankshaft(kForOfStatement);
-  node->set_base_id(ReserveIdRange(ForOfStatement::num_ids()));
-  Visit(node->assign_iterator());
+  Visit(node->assign_iterator());  // Not part of loop.
+  node->set_first_suspend_id(suspend_count_);
   Visit(node->next_result());
   Visit(node->result_done());
   Visit(node->assign_each());
   Visit(node->body());
-  ReserveFeedbackSlots(node);
+  node->set_suspend_count(suspend_count_ - node->first_suspend_id());
 }
 
-
 void AstNumberingVisitor::VisitConditional(Conditional* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(Conditional::num_ids()));
   Visit(node->condition());
   Visit(node->then_expression());
   Visit(node->else_expression());
 }
 
-
 void AstNumberingVisitor::VisitIfStatement(IfStatement* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(IfStatement::num_ids()));
   Visit(node->condition());
   Visit(node->then_statement());
   if (node->HasElseStatement()) {
@@ -416,120 +284,85 @@ void AstNumberingVisitor::VisitIfStatement(IfStatement* node) {
   }
 }
 
-
 void AstNumberingVisitor::VisitSwitchStatement(SwitchStatement* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(SwitchStatement::num_ids()));
   Visit(node->tag());
-  ZoneList<CaseClause*>* cases = node->cases();
-  for (int i = 0; i < cases->length(); i++) {
-    VisitCaseClause(cases->at(i));
+  for (CaseClause* clause : *node->cases()) {
+    if (!clause->is_default()) Visit(clause->label());
+    VisitStatements(clause->statements());
   }
 }
-
-
-void AstNumberingVisitor::VisitCaseClause(CaseClause* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(CaseClause::num_ids()));
-  if (!node->is_default()) Visit(node->label());
-  VisitStatements(node->statements());
-}
-
 
 void AstNumberingVisitor::VisitForStatement(ForStatement* node) {
-  IncrementNodeCount();
-  DisableSelfOptimization();
-  node->set_base_id(ReserveIdRange(ForStatement::num_ids()));
-  if (node->init() != NULL) Visit(node->init());
-  if (node->cond() != NULL) Visit(node->cond());
-  if (node->next() != NULL) Visit(node->next());
+  if (node->init() != nullptr) Visit(node->init());  // Not part of loop.
+  node->set_first_suspend_id(suspend_count_);
+  if (node->cond() != nullptr) Visit(node->cond());
+  if (node->next() != nullptr) Visit(node->next());
   Visit(node->body());
+  node->set_suspend_count(suspend_count_ - node->first_suspend_id());
 }
-
 
 void AstNumberingVisitor::VisitClassLiteral(ClassLiteral* node) {
-  IncrementNodeCount();
-  DisableCrankshaft(kClassLiteral);
-  node->set_base_id(ReserveIdRange(node->num_ids()));
   if (node->extends()) Visit(node->extends());
   if (node->constructor()) Visit(node->constructor());
-  if (node->class_variable_proxy()) {
-    VisitVariableProxy(node->class_variable_proxy());
+  if (node->static_fields_initializer() != nullptr) {
+    Visit(node->static_fields_initializer());
   }
   for (int i = 0; i < node->properties()->length(); i++) {
-    VisitObjectLiteralProperty(node->properties()->at(i));
+    VisitLiteralProperty(node->properties()->at(i));
   }
-  ReserveFeedbackSlots(node);
 }
 
+void AstNumberingVisitor::VisitInitializeClassFieldsStatement(
+    InitializeClassFieldsStatement* node) {
+  for (int i = 0; i < node->fields()->length(); i++) {
+    VisitLiteralProperty(node->fields()->at(i));
+  }
+}
 
 void AstNumberingVisitor::VisitObjectLiteral(ObjectLiteral* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(node->num_ids()));
   for (int i = 0; i < node->properties()->length(); i++) {
-    VisitObjectLiteralProperty(node->properties()->at(i));
+    VisitLiteralProperty(node->properties()->at(i));
   }
-  node->BuildConstantProperties(isolate_);
+  node->InitDepthAndFlags();
   // Mark all computed expressions that are bound to a key that
   // is shadowed by a later occurrence of the same key. For the
   // marked expressions, no store code will be is emitted.
   node->CalculateEmitStore(zone_);
-  ReserveFeedbackSlots(node);
 }
 
-
-void AstNumberingVisitor::VisitObjectLiteralProperty(
-    ObjectLiteralProperty* node) {
-  if (node->is_computed_name()) DisableCrankshaft(kComputedPropertyName);
+void AstNumberingVisitor::VisitLiteralProperty(LiteralProperty* node) {
   Visit(node->key());
   Visit(node->value());
 }
 
-
 void AstNumberingVisitor::VisitArrayLiteral(ArrayLiteral* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(node->num_ids()));
   for (int i = 0; i < node->values()->length(); i++) {
     Visit(node->values()->at(i));
   }
-  node->BuildConstantElements(isolate_);
-  ReserveFeedbackSlots(node);
+  node->InitDepthAndFlags();
 }
-
 
 void AstNumberingVisitor::VisitCall(Call* node) {
-  IncrementNodeCount();
-  ReserveFeedbackSlots(node);
-  node->set_base_id(ReserveIdRange(Call::num_ids()));
   Visit(node->expression());
   VisitArguments(node->arguments());
 }
-
 
 void AstNumberingVisitor::VisitCallNew(CallNew* node) {
-  IncrementNodeCount();
-  ReserveFeedbackSlots(node);
-  node->set_base_id(ReserveIdRange(CallNew::num_ids()));
   Visit(node->expression());
   VisitArguments(node->arguments());
 }
 
-
 void AstNumberingVisitor::VisitStatements(ZoneList<Statement*>* statements) {
-  if (statements == NULL) return;
+  if (statements == nullptr) return;
   for (int i = 0; i < statements->length(); i++) {
     Visit(statements->at(i));
+    if (statements->at(i)->IsJump()) break;
   }
 }
 
-
-void AstNumberingVisitor::VisitDeclarations(
-    ZoneList<Declaration*>* declarations) {
-  for (int i = 0; i < declarations->length(); i++) {
-    Visit(declarations->at(i));
-  }
+void AstNumberingVisitor::VisitDeclarations(Declaration::List* decls) {
+  for (Declaration* decl : *decls) Visit(decl);
 }
-
 
 void AstNumberingVisitor::VisitArguments(ZoneList<Expression*>* arguments) {
   for (int i = 0; i < arguments->length(); i++) {
@@ -537,53 +370,49 @@ void AstNumberingVisitor::VisitArguments(ZoneList<Expression*>* arguments) {
   }
 }
 
-
 void AstNumberingVisitor::VisitFunctionLiteral(FunctionLiteral* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(FunctionLiteral::num_ids()));
-  // We don't recurse into the declarations or body of the function literal:
-  // you have to separately Renumber() each FunctionLiteral that you compile.
-}
+  if (node->ShouldEagerCompile()) {
+    if (eager_literals_) {
+      eager_literals_->Add(new (zone())
+                               ThreadedListZoneEntry<FunctionLiteral*>(node));
+    }
 
+    // If the function literal is being eagerly compiled, recurse into the
+    // declarations and body of the function literal.
+    if (!AstNumbering::Renumber(stack_limit_, zone_, node, eager_literals_)) {
+      SetStackOverflow();
+      return;
+    }
+  }
+}
 
 void AstNumberingVisitor::VisitRewritableExpression(
     RewritableExpression* node) {
-  IncrementNodeCount();
-  node->set_base_id(ReserveIdRange(RewritableExpression::num_ids()));
   Visit(node->expression());
 }
 
-
-bool AstNumberingVisitor::Finish(FunctionLiteral* node) {
-  node->set_ast_properties(&properties_);
-  node->set_dont_optimize_reason(dont_optimize_reason());
-  return !HasStackOverflow();
-}
-
-
 bool AstNumberingVisitor::Renumber(FunctionLiteral* node) {
-  Scope* scope = node->scope();
-  if (scope->new_target_var()) DisableCrankshaft(kSuperReference);
-  if (scope->calls_eval()) DisableOptimization(kFunctionCallsEval);
-  if (scope->arguments() != NULL && !scope->arguments()->IsStackAllocated()) {
-    DisableCrankshaft(kContextAllocatedArguments);
-  }
-
-  int rest_index;
-  if (scope->rest_parameter(&rest_index)) {
-    DisableCrankshaft(kRestParameter);
-  }
+  DeclarationScope* scope = node->scope();
+  DCHECK(!scope->HasBeenRemoved());
+  function_kind_ = node->kind();
 
   VisitDeclarations(scope->declarations());
   VisitStatements(node->body());
 
-  return Finish(node);
+  node->set_dont_optimize_reason(dont_optimize_reason());
+  node->set_suspend_count(suspend_count_);
+
+  return !HasStackOverflow();
 }
 
+bool AstNumbering::Renumber(
+    uintptr_t stack_limit, Zone* zone, FunctionLiteral* function,
+    Compiler::EagerInnerFunctionLiterals* eager_literals) {
+  DisallowHeapAllocation no_allocation;
+  DisallowHandleAllocation no_handles;
+  DisallowHandleDereference no_deref;
 
-bool AstNumbering::Renumber(Isolate* isolate, Zone* zone,
-                            FunctionLiteral* function) {
-  AstNumberingVisitor visitor(isolate, zone);
+  AstNumberingVisitor visitor(stack_limit, zone, eager_literals);
   return visitor.Renumber(function);
 }
 }  // namespace internal

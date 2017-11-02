@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --harmony-unicode-regexps
-
 var r1 = /abc/gi;
 assertEquals("abc", r1.source);
 assertTrue(r1.global);
@@ -44,19 +42,22 @@ assertEquals(2, get_count);
 // Overridden flag getters affects the flags getter.
 assertEquals("gi", r3.flags);
 assertEquals(4, get_count);
-// Overridden flag getters do not affect the internal flags.
-assertEquals(expected, string.replace(r3, "X"));
-assertEquals(4, get_count);
+// Overridden flag getters affect string.replace
+// TODO(adamk): Add more tests here once we've switched
+// to use [[OriginalFlags]] in more cases.
+// TODO(jgruber): This exact case actually causes an infinite loop in the spec
+// (@@replace sees global = true while BuiltinExec sees global = false).
+// Comment the test for now and remove / fix once this has been resolved on
+// the spec side.
+//assertEquals(expected, string.replace(r3, "X"));
+//assertEquals(5, get_count);
 
 
 function testName(name) {
-  // TODO(littledan): For web compatibility, we don't throw an exception,
-  // but ES2015 expects an exception to be thrown from this getter.
-  if (name === "source") {
-    assertThrows(() => RegExp.prototype[name], TypeError);
-  } else {
-    assertEquals(undefined, RegExp.prototype[name]);
-  }
+  // Test for ES2017 RegExp web compatibility semantics
+  // https://github.com/tc39/ecma262/pull/511
+  assertEquals(name === "source" ? "(?:)" : undefined,
+               RegExp.prototype[name]);
   assertEquals(
       "get " + name,
       Object.getOwnPropertyDescriptor(RegExp.prototype, name).get.name);
