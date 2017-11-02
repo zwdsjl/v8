@@ -7,19 +7,13 @@
 
 #include "src/base/logging.h"
 #include "src/handles-inl.h"
-
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
 
-void SnapshotByteSource::CopyRaw(byte* to, int number_of_bytes) {
-  memcpy(to, data_ + position_, number_of_bytes);
-  position_ += number_of_bytes;
-}
-
-
 void SnapshotByteSink::PutInt(uintptr_t integer, const char* description) {
-  DCHECK(integer < 1 << 30);
+  DCHECK_LT(integer, 1 << 30);
   integer <<= 2;
   int bytes = 1;
   if (integer > 0xff) bytes = 2;
@@ -35,7 +29,7 @@ void SnapshotByteSink::PutInt(uintptr_t integer, const char* description) {
 
 void SnapshotByteSink::PutRaw(const byte* data, int number_of_bytes,
                               const char* description) {
-  data_.AddAll(Vector<byte>(const_cast<byte*>(data), number_of_bytes));
+  data_.insert(data_.end(), data, data + number_of_bytes);
 }
 
 

@@ -6,50 +6,33 @@
 #define V8_IC_ACCESS_COMPILER_H_
 
 #include "src/code-stubs.h"
+#include "src/ic/access-compiler-data.h"
 #include "src/macro-assembler.h"
 #include "src/objects.h"
 
 namespace v8 {
 namespace internal {
 
-
 class PropertyAccessCompiler BASE_EMBEDDED {
  public:
-  static Builtins::Name MissBuiltin(Code::Kind kind) {
-    switch (kind) {
-      case Code::LOAD_IC:
-        return Builtins::kLoadIC_Miss;
-      case Code::STORE_IC:
-        return Builtins::kStoreIC_Miss;
-      case Code::KEYED_LOAD_IC:
-        return Builtins::kKeyedLoadIC_Miss;
-      case Code::KEYED_STORE_IC:
-        return Builtins::kKeyedStoreIC_Miss;
-      default:
-        UNREACHABLE();
-    }
-    return Builtins::kLoadIC_Miss;
-  }
+  enum Type { LOAD, STORE };
 
   static void TailCallBuiltin(MacroAssembler* masm, Builtins::Name name);
 
  protected:
-  PropertyAccessCompiler(Isolate* isolate, Code::Kind kind,
-                         CacheHolderFlag cache_holder)
-      : registers_(GetCallingConvention(kind)),
-        kind_(kind),
-        cache_holder_(cache_holder),
+  PropertyAccessCompiler(Isolate* isolate, Type type)
+      : registers_(GetCallingConvention(isolate, type)),
+        type_(type),
         isolate_(isolate),
-        masm_(isolate, NULL, 256, CodeObjectRequired::kYes) {
+        masm_(isolate, nullptr, 256, CodeObjectRequired::kYes) {
     // TODO(yangguo): remove this once we can serialize IC stubs.
     masm_.enable_serializer();
   }
 
-  Code::Kind kind() const { return kind_; }
-  CacheHolderFlag cache_holder() const { return cache_holder_; }
+  Type type() const { return type_; }
+
   MacroAssembler* masm() { return &masm_; }
   Isolate* isolate() const { return isolate_; }
-  Heap* heap() const { return isolate()->heap(); }
   Factory* factory() const { return isolate()->factory(); }
 
   Register receiver() const { return registers_[0]; }
@@ -58,24 +41,16 @@ class PropertyAccessCompiler BASE_EMBEDDED {
   Register vector() const;
   Register scratch1() const { return registers_[2]; }
   Register scratch2() const { return registers_[3]; }
-  Register scratch3() const { return registers_[4]; }
-
-  static Register* GetCallingConvention(Code::Kind);
-  static Register* load_calling_convention();
-  static Register* store_calling_convention();
-  static Register* keyed_store_calling_convention();
 
   Register* registers_;
 
   static void GenerateTailCall(MacroAssembler* masm, Handle<Code> code);
 
-  Handle<Code> GetCodeWithFlags(Code::Flags flags, const char* name);
-  Handle<Code> GetCodeWithFlags(Code::Flags flags, Handle<Name> name);
-
  private:
-  Code::Kind kind_;
-  CacheHolderFlag cache_holder_;
+  static Register* GetCallingConvention(Isolate* isolate, Type type);
+  static void InitializePlatformSpecific(AccessCompilerData* data);
 
+  Type type_;
   Isolate* isolate_;
   MacroAssembler masm_;
   // Ensure that MacroAssembler has a reasonable size.

@@ -27,8 +27,6 @@
 #include <sys/sysctl.h>  // NOLINT, for sysctl
 #endif
 
-#undef MAP_TYPE
-
 #if defined(ANDROID) && !defined(V8_ANDROID_LOG_STDOUT)
 #define LOG_TAG "v8"
 #include <android/log.h>  // NOLINT
@@ -36,6 +34,8 @@
 
 #include <cmath>
 #include <cstdlib>
+
+#include "src/base/platform/platform-posix.h"
 
 #include "src/base/lazy-instance.h"
 #include "src/base/macros.h"
@@ -55,7 +55,7 @@
 #include <sys/prctl.h>  // NOLINT, for prctl
 #endif
 
-#if !defined(V8_OS_NACL) && !defined(_AIX)
+#if !defined(_AIX) && !defined(V8_OS_FUCHSIA)
 #include <sys/syscall.h>
 #endif
 
@@ -69,10 +69,38 @@ const pthread_t kNoThread = (pthread_t) 0;
 
 bool g_hard_abort = false;
 
-const char* g_gc_fake_mmap = NULL;
+const char* g_gc_fake_mmap = nullptr;
+
+#if !V8_OS_FUCHSIA
+#if V8_OS_MACOSX
+// kMmapFd is used to pass vm_alloc flags to tag the region with the user
+// defined tag 255 This helps identify V8-allocated regions in memory analysis
+// tools like vmmap(1).
+const int kMmapFd = VM_MAKE_TAG(255);
+#else   // !V8_OS_MACOSX
+const int kMmapFd = -1;
+#endif  // !V8_OS_MACOSX
+
+const int kMmapFdOffset = 0;
+
+int GetProtectionFromMemoryPermission(OS::MemoryPermission access) {
+  switch (access) {
+    case OS::MemoryPermission::kNoAccess:
+      return PROT_NONE;
+    case OS::MemoryPermission::kReadWrite:
+      return PROT_READ | PROT_WRITE;
+    case OS::MemoryPermission::kReadWriteExecute:
+      return PROT_READ | PROT_WRITE | PROT_EXEC;
+  }
+  UNREACHABLE();
+}
+#endif  // !V8_OS_FUCHSIA
 
 }  // namespace
 
+#if V8_OS_FREEBSD || V8_OS_MACOSX || V8_OS_OPENBSD || V8_OS_SOLARIS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 
 int OS::ActivationFrameAlignment() {
 #if V8_TARGET_ARCH_ARM
@@ -93,37 +121,52 @@ int OS::ActivationFrameAlignment() {
 #endif
 }
 
-
 intptr_t OS::CommitPageSize() {
   static intptr_t page_size = getpagesize();
   return page_size;
 }
 
+void* OS::Allocate(const size_t requested, size_t* allocated,
+                   bool is_executable, void* hint) {
+  return OS::Allocate(requested, allocated,
+                      is_executable ? OS::MemoryPermission::kReadWriteExecute
+                                    : OS::MemoryPermission::kReadWrite,
+                      hint);
+}
+
+// TODO(bbudge) Move Cygwin and Fuschia stuff into platform-specific files.
+#if !V8_OS_FUCHSIA
+void* OS::Allocate(const size_t requested, size_t* allocated,
+                   OS::MemoryPermission access, void* hint) {
+  const size_t msize = RoundUp(requested, AllocateAlignment());
+  int prot = GetProtectionFromMemoryPermission(access);
+  void* mbase = mmap(hint, msize, prot, MAP_PRIVATE | MAP_ANONYMOUS, kMmapFd,
+                     kMmapFdOffset);
+  if (mbase == MAP_FAILED) return nullptr;
+  *allocated = msize;
+  return mbase;
+}
+#endif  // !V8_OS_FUCHSIA
 
 void OS::Free(void* address, const size_t size) {
   // TODO(1240712): munmap has a return value which is ignored here.
   int result = munmap(address, size);
   USE(result);
-  DCHECK(result == 0);
+  DCHECK_EQ(0, result);
 }
 
-
-// Get rid of writable permission on code allocations.
-void OS::ProtectCode(void* address, const size_t size) {
+void OS::SetReadAndExecutable(void* address, const size_t size) {
 #if V8_OS_CYGWIN
   DWORD old_protect;
-  VirtualProtect(address, size, PAGE_EXECUTE_READ, &old_protect);
-#elif V8_OS_NACL
-  // The Native Client port of V8 uses an interpreter, so
-  // code pages don't need PROT_EXEC.
-  mprotect(address, size, PROT_READ);
+  CHECK_NOT_NULL(
+      VirtualProtect(address, size, PAGE_EXECUTE_READ, &old_protect));
 #else
-  mprotect(address, size, PROT_READ | PROT_EXEC);
+  CHECK_EQ(0, mprotect(address, size, PROT_READ | PROT_EXEC));
 #endif
 }
 
-
 // Create guard pages.
+#if !V8_OS_FUCHSIA
 void OS::Guard(void* address, const size_t size) {
 #if V8_OS_CYGWIN
   DWORD oldprotect;
@@ -132,11 +175,128 @@ void OS::Guard(void* address, const size_t size) {
   mprotect(address, size, PROT_NONE);
 #endif
 }
+#endif  // !V8_OS_FUCHSIA
 
+// Make a region of memory readable and writable.
+void OS::SetReadAndWritable(void* address, const size_t size, bool commit) {
+#if V8_OS_CYGWIN
+  DWORD oldprotect;
+  CHECK_NOT_NULL(VirtualProtect(address, size, PAGE_READWRITE, &oldprotect));
+#else
+  CHECK_EQ(0, mprotect(address, size, PROT_READ | PROT_WRITE));
+#endif
+}
+
+#if !V8_OS_CYGWIN && !V8_OS_FUCHSIA
+// static
+void* OS::ReserveRegion(size_t size, void* hint) {
+  int map_flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#if !V8_OS_AIX && !V8_OS_FREEBSD && !V8_OS_QNX
+  map_flags |= MAP_NORESERVE;
+#endif
+#if V8_OS_QNX
+  map_flags |= MAP_LAZY;
+#endif  // V8_OS_QNX
+  void* result = mmap(hint, size, PROT_NONE, map_flags, kMmapFd, kMmapFdOffset);
+  if (result == MAP_FAILED) return nullptr;
+
+  return result;
+}
+
+// static
+void* OS::ReserveAlignedRegion(size_t size, size_t alignment, void* hint,
+                               size_t* allocated) {
+  DCHECK_EQ(0, alignment % OS::AllocateAlignment());
+  hint = AlignedAddress(hint, alignment);
+  size_t request_size =
+      RoundUp(size + alignment, static_cast<intptr_t>(OS::AllocateAlignment()));
+  void* result = ReserveRegion(request_size, hint);
+  if (result == nullptr) {
+    *allocated = 0;
+    return nullptr;
+  }
+
+  uint8_t* base = static_cast<uint8_t*>(result);
+  uint8_t* aligned_base = RoundUp(base, alignment);
+  DCHECK_LE(base, aligned_base);
+
+  // Unmap extra memory reserved before and after the desired block.
+  if (aligned_base != base) {
+    size_t prefix_size = static_cast<size_t>(aligned_base - base);
+    OS::Free(base, prefix_size);
+    request_size -= prefix_size;
+  }
+
+  size_t aligned_size = RoundUp(size, OS::AllocateAlignment());
+  DCHECK_LE(aligned_size, request_size);
+
+  if (aligned_size != request_size) {
+    size_t suffix_size = request_size - aligned_size;
+    OS::Free(aligned_base + aligned_size, suffix_size);
+    request_size -= suffix_size;
+  }
+
+  DCHECK(aligned_size == request_size);
+
+  *allocated = aligned_size;
+  return static_cast<void*>(aligned_base);
+}
+
+// static
+bool OS::CommitRegion(void* address, size_t size, bool is_executable) {
+  int prot = PROT_READ | PROT_WRITE | (is_executable ? PROT_EXEC : 0);
+#if !V8_OS_AIX
+  if (MAP_FAILED == mmap(address, size, prot,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, kMmapFd,
+                         kMmapFdOffset)) {
+    return false;
+  }
+#else
+  if (mprotect(address, size, prot) == -1) return false;
+#endif  // !V8_OS_AIX
+  return true;
+}
+
+// static
+bool OS::UncommitRegion(void* address, size_t size) {
+#if !V8_OS_AIX
+  int map_flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
+#if !V8_OS_FREEBSD && !V8_OS_QNX
+  map_flags |= MAP_NORESERVE;
+#endif  // !V8_OS_FREEBSD && !V8_OS_QNX
+#if V8_OS_QNX
+  map_flags |= MAP_LAZY;
+#endif  // V8_OS_QNX
+  return mmap(address, size, PROT_NONE, map_flags, kMmapFd, kMmapFdOffset) !=
+         MAP_FAILED;
+#else   // V8_OS_AIX
+  return mprotect(address, size, PROT_NONE) != -1;
+#endif  // V8_OS_AIX
+}
+
+// static
+bool OS::ReleaseRegion(void* address, size_t size) {
+  return munmap(address, size) == 0;
+}
+
+// static
+bool OS::ReleasePartialRegion(void* address, size_t size) {
+  return munmap(address, size) == 0;
+}
+
+// static
+bool OS::HasLazyCommits() {
+#if V8_OS_AIX || V8_OS_LINUX || V8_OS_MACOSX
+  return true;
+#else
+  // TODO(bbudge) Return true for all POSIX platforms.
+  return false;
+#endif
+}
+#endif  // !V8_OS_CYGWIN && !V8_OS_FUCHSIA
 
 static LazyInstance<RandomNumberGenerator>::type
     platform_random_number_generator = LAZY_INSTANCE_INITIALIZER;
-
 
 void OS::Initialize(int64_t random_seed, bool hard_abort,
                     const char* const gc_fake_mmap) {
@@ -147,23 +307,15 @@ void OS::Initialize(int64_t random_seed, bool hard_abort,
   g_gc_fake_mmap = gc_fake_mmap;
 }
 
-
 const char* OS::GetGCFakeMMapFile() {
   return g_gc_fake_mmap;
 }
 
-
 void* OS::GetRandomMmapAddr() {
-#if V8_OS_NACL
-  // TODO(bradchen): restore randomization once Native Client gets
-  // smarter about using mmap address hints.
-  // See http://code.google.com/p/nativeclient/issues/3341
-  return NULL;
-#endif
 #if defined(ADDRESS_SANITIZER) || defined(MEMORY_SANITIZER) || \
     defined(THREAD_SANITIZER)
   // Dynamic tools do not support custom mmap addresses.
-  return NULL;
+  return nullptr;
 #endif
   uintptr_t raw_addr;
   platform_random_number_generator.Pointer()->NextBytes(&raw_addr,
@@ -199,7 +351,7 @@ void* OS::GetRandomMmapAddr() {
 #else
   raw_addr &= 0x3ffff000;
 
-# ifdef __sun
+#ifdef __sun
   // For our Solaris/illumos mmap hint, we pick a random address in the bottom
   // half of the top half of the address space (that is, the third quarter).
   // Because we do not MAP_FIXED, this will be treated only as a hint -- the
@@ -214,16 +366,15 @@ void* OS::GetRandomMmapAddr() {
   // The range 0x30000000 - 0xD0000000 is available on AIX;
   // choose the upper range.
   raw_addr += 0x90000000;
-# else
+#else
   // The range 0x20000000 - 0x60000000 is relatively unpopulated across a
   // variety of ASLR modes (PAE kernel, NX compat mode, etc) and on macos
   // 10.6 and 10.7.
   raw_addr += 0x20000000;
-# endif
+#endif
 #endif
   return reinterpret_cast<void*>(raw_addr);
 }
-
 
 size_t OS::AllocateAlignment() {
   return static_cast<size_t>(sysconf(_SC_PAGESIZE));
@@ -256,11 +407,7 @@ void OS::DebugBreak() {
 #elif V8_HOST_ARCH_PPC
   asm("twge 2,2");
 #elif V8_HOST_ARCH_IA32
-#if V8_OS_NACL
-  asm("hlt");
-#else
   asm("int $3");
-#endif  // V8_OS_NACL
 #elif V8_HOST_ARCH_X64
   asm("int $3");
 #elif V8_HOST_ARCH_S390
@@ -345,6 +492,8 @@ int OS::GetCurrentThreadId() {
   return static_cast<int>(gettid());
 #elif V8_OS_AIX
   return static_cast<int>(thread_self());
+#elif V8_OS_FUCHSIA
+  return static_cast<int>(pthread_self());
 #elif V8_OS_SOLARIS
   return static_cast<int>(pthread_self());
 #else
@@ -358,17 +507,12 @@ int OS::GetCurrentThreadId() {
 //
 
 int OS::GetUserTime(uint32_t* secs, uint32_t* usecs) {
-#if V8_OS_NACL
-  // Optionally used in Logger::ResourceEvent.
-  return -1;
-#else
   struct rusage usage;
 
   if (getrusage(RUSAGE_SELF, &usage) < 0) return -1;
   *secs = static_cast<uint32_t>(usage.ru_utime.tv_sec);
   *usecs = static_cast<uint32_t>(usage.ru_utime.tv_usec);
   return 0;
-#endif
 }
 
 
@@ -376,30 +520,12 @@ double OS::TimeCurrentMillis() {
   return Time::Now().ToJsTime();
 }
 
-
-class TimezoneCache {};
-
-
-TimezoneCache* OS::CreateTimezoneCache() {
-  return NULL;
-}
-
-
-void OS::DisposeTimezoneCache(TimezoneCache* cache) {
-  DCHECK(cache == NULL);
-}
-
-
-void OS::ClearTimezoneCache(TimezoneCache* cache) {
-  DCHECK(cache == NULL);
-}
-
-
-double OS::DaylightSavingsOffset(double time, TimezoneCache*) {
+double PosixTimezoneCache::DaylightSavingsOffset(double time) {
   if (std::isnan(time)) return std::numeric_limits<double>::quiet_NaN();
   time_t tv = static_cast<time_t>(std::floor(time/msPerSecond));
-  struct tm* t = localtime(&tv);  // NOLINT(runtime/threadsafe_fn)
-  if (NULL == t) return std::numeric_limits<double>::quiet_NaN();
+  struct tm tm;
+  struct tm* t = localtime_r(&tv, &tm);
+  if (nullptr == t) return std::numeric_limits<double>::quiet_NaN();
   return t->tm_isdst > 0 ? 3600 * msPerSecond : 0;
 }
 
@@ -415,13 +541,16 @@ int OS::GetLastError() {
 
 FILE* OS::FOpen(const char* path, const char* mode) {
   FILE* file = fopen(path, mode);
-  if (file == NULL) return NULL;
+  if (file == nullptr) return nullptr;
   struct stat file_stat;
-  if (fstat(fileno(file), &file_stat) != 0) return NULL;
+  if (fstat(fileno(file), &file_stat) != 0) {
+    fclose(file);
+    return nullptr;
+  }
   bool is_regular_file = ((file_stat.st_mode & S_IFREG) != 0);
   if (is_regular_file) return file;
   fclose(file);
-  return NULL;
+  return nullptr;
 }
 
 
@@ -549,7 +678,7 @@ class Thread::PlatformData {
 Thread::Thread(const Options& options)
     : data_(new PlatformData),
       stack_size_(options.stack_size()),
-      start_semaphore_(NULL) {
+      start_semaphore_(nullptr) {
   if (stack_size_ > 0 && static_cast<size_t>(stack_size_) < PTHREAD_STACK_MIN) {
     stack_size_ = PTHREAD_STACK_MIN;
   }
@@ -574,8 +703,7 @@ static void SetThreadName(const char* name) {
   int (*dynamic_pthread_setname_np)(const char*);
   *reinterpret_cast<void**>(&dynamic_pthread_setname_np) =
     dlsym(RTLD_DEFAULT, "pthread_setname_np");
-  if (dynamic_pthread_setname_np == NULL)
-    return;
+  if (dynamic_pthread_setname_np == nullptr) return;
 
   // Mac OS X does not expose the length limit of the name, so hardcode it.
   static const int kMaxNameLength = 63;
@@ -596,9 +724,9 @@ static void* ThreadEntry(void* arg) {
   // one).
   { LockGuard<Mutex> lock_guard(&thread->data()->thread_creation_mutex_); }
   SetThreadName(thread->name());
-  DCHECK(thread->data()->thread_ != kNoThread);
+  DCHECK_NE(thread->data()->thread_, kNoThread);
   thread->NotifyStartedAndRun();
-  return NULL;
+  return nullptr;
 }
 
 
@@ -614,20 +742,20 @@ void Thread::Start() {
   memset(&attr, 0, sizeof(attr));
   result = pthread_attr_init(&attr);
   DCHECK_EQ(0, result);
-  // Native client uses default stack size.
-#if !V8_OS_NACL
   size_t stack_size = stack_size_;
-#if V8_OS_AIX
   if (stack_size == 0) {
-    // Default on AIX is 96KB -- bump up to 2MB
+#if V8_OS_MACOSX
+    // Default on Mac OS X is 512kB -- bump up to 1MB
+    stack_size = 1 * 1024 * 1024;
+#elif V8_OS_AIX
+    // Default on AIX is 96kB -- bump up to 2MB
     stack_size = 2 * 1024 * 1024;
-  }
 #endif
+  }
   if (stack_size > 0) {
     result = pthread_attr_setstacksize(&attr, stack_size);
     DCHECK_EQ(0, result);
   }
-#endif
   {
     LockGuard<Mutex> lock_guard(&data_->thread_creation_mutex_);
     result = pthread_create(&data_->thread_, &attr, ThreadEntry, this);
@@ -635,15 +763,11 @@ void Thread::Start() {
   DCHECK_EQ(0, result);
   result = pthread_attr_destroy(&attr);
   DCHECK_EQ(0, result);
-  DCHECK(data_->thread_ != kNoThread);
+  DCHECK_NE(data_->thread_, kNoThread);
   USE(result);
 }
 
-
-void Thread::Join() {
-  pthread_join(data_->thread_, NULL);
-}
-
+void Thread::Join() { pthread_join(data_->thread_, nullptr); }
 
 static Thread::LocalStorageKey PthreadKeyToLocalKey(pthread_key_t pthread_key) {
 #if V8_OS_CYGWIN
@@ -682,7 +806,7 @@ static void InitializeTlsBaseOffset() {
   char buffer[kBufferSize];
   size_t buffer_size = kBufferSize;
   int ctl_name[] = { CTL_KERN , KERN_OSRELEASE };
-  if (sysctl(ctl_name, 2, buffer, &buffer_size, NULL, 0) != 0) {
+  if (sysctl(ctl_name, 2, buffer, &buffer_size, nullptr, 0) != 0) {
     V8_Fatal(__FILE__, __LINE__, "V8 failed to get kernel version");
   }
   // The buffer now contains a string of the form XX.YY.ZZ, where
@@ -692,7 +816,7 @@ static void InitializeTlsBaseOffset() {
   char* period_pos = strchr(buffer, '.');
   *period_pos = '\0';
   int kernel_version_major =
-      static_cast<int>(strtol(buffer, NULL, 10));  // NOLINT
+      static_cast<int>(strtol(buffer, nullptr, 10));  // NOLINT
   // The constants below are taken from pthreads.s from the XNU kernel
   // sources archive at www.opensource.apple.com.
   if (kernel_version_major < 11) {
@@ -720,7 +844,7 @@ static void CheckFastTls(Thread::LocalStorageKey key) {
     V8_Fatal(__FILE__, __LINE__,
              "V8 failed to initialize fast TLS on current kernel");
   }
-  Thread::SetThreadLocal(key, NULL);
+  Thread::SetThreadLocal(key, nullptr);
 }
 
 #endif  // V8_FAST_TLS_SUPPORTED
@@ -735,7 +859,7 @@ Thread::LocalStorageKey Thread::CreateThreadLocalKey() {
   }
 #endif
   pthread_key_t key;
-  int result = pthread_key_create(&key, NULL);
+  int result = pthread_key_create(&key, nullptr);
   DCHECK_EQ(0, result);
   USE(result);
   LocalStorageKey local_key = PthreadKeyToLocalKey(key);
@@ -767,6 +891,9 @@ void Thread::SetThreadLocal(LocalStorageKey key, void* value) {
   DCHECK_EQ(0, result);
   USE(result);
 }
+
+#undef LOG_TAG
+#undef MAP_ANONYMOUS
 
 }  // namespace base
 }  // namespace v8

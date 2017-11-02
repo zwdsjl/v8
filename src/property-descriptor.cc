@@ -9,6 +9,7 @@
 #include "src/isolate-inl.h"
 #include "src/lookup.h"
 #include "src/objects-inl.h"
+#include "src/objects/property-descriptor-object-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -61,19 +62,26 @@ bool ToPropertyDescriptorFastPath(Isolate* isolate, Handle<JSReceiver> obj,
     PropertyDetails details = descs->GetDetails(i);
     Name* key = descs->GetKey(i);
     Handle<Object> value;
-    switch (details.type()) {
-      case DATA:
+    if (details.location() == kField) {
+      if (details.kind() == kData) {
         value = JSObject::FastPropertyAt(Handle<JSObject>::cast(obj),
                                          details.representation(),
                                          FieldIndex::ForDescriptor(map, i));
-        break;
-      case DATA_CONSTANT:
-        value = handle(descs->GetConstant(i), isolate);
-        break;
-      case ACCESSOR:
-      case ACCESSOR_CONSTANT:
+      } else {
+        DCHECK_EQ(kAccessor, details.kind());
         // Bail out to slow path.
         return false;
+      }
+
+    } else {
+      DCHECK_EQ(kDescriptor, details.location());
+      if (details.kind() == kData) {
+        value = handle(descs->GetValue(i), isolate);
+      } else {
+        DCHECK_EQ(kAccessor, details.kind());
+        // Bail out to slow path.
+        return false;
+      }
     }
     Heap* heap = isolate->heap();
     if (key == heap->enumerable_string()) {
@@ -249,7 +257,7 @@ bool PropertyDescriptor::ToPropertyDescriptor(Isolate* isolate,
   if (!getter.is_null()) {
     // 18c. If IsCallable(getter) is false and getter is not undefined,
     // throw a TypeError exception.
-    if (!getter->IsCallable() && !getter->IsUndefined()) {
+    if (!getter->IsCallable() && !getter->IsUndefined(isolate)) {
       isolate->Throw(*isolate->factory()->NewTypeError(
           MessageTemplate::kObjectGetterCallable, getter));
       return false;
@@ -267,7 +275,7 @@ bool PropertyDescriptor::ToPropertyDescriptor(Isolate* isolate,
   if (!setter.is_null()) {
     // 21c. If IsCallable(setter) is false and setter is not undefined,
     // throw a TypeError exception.
-    if (!setter->IsCallable() && !setter->IsUndefined()) {
+    if (!setter->IsCallable() && !setter->IsUndefined(isolate)) {
       isolate->Throw(*isolate->factory()->NewTypeError(
           MessageTemplate::kObjectSetterCallable, setter));
       return false;
@@ -332,6 +340,34 @@ void PropertyDescriptor::CompletePropertyDescriptor(Isolate* isolate,
   //    Desc.[[Configurable]] to like.[[Configurable]].
   if (!desc->has_configurable()) desc->set_configurable(false);
   // 8. Return Desc.
+}
+
+Handle<PropertyDescriptorObject> PropertyDescriptor::ToPropertyDescriptorObject(
+    Isolate* isolate) {
+  Handle<PropertyDescriptorObject> obj = Handle<PropertyDescriptorObject>::cast(
+      isolate->factory()->NewFixedArray(PropertyDescriptorObject::kLength));
+
+  int flags =
+      PropertyDescriptorObject::IsEnumerableBit::encode(enumerable_) |
+      PropertyDescriptorObject::HasEnumerableBit::encode(has_enumerable_) |
+      PropertyDescriptorObject::IsConfigurableBit::encode(configurable_) |
+      PropertyDescriptorObject::HasConfigurableBit::encode(has_configurable_) |
+      PropertyDescriptorObject::IsWritableBit::encode(writable_) |
+      PropertyDescriptorObject::HasWritableBit::encode(has_writable_) |
+      PropertyDescriptorObject::HasValueBit::encode(has_value()) |
+      PropertyDescriptorObject::HasGetBit::encode(has_get()) |
+      PropertyDescriptorObject::HasSetBit::encode(has_set());
+
+  obj->set(PropertyDescriptorObject::kFlagsIndex, Smi::FromInt(flags));
+
+  obj->set(PropertyDescriptorObject::kValueIndex,
+           has_value() ? *value_ : isolate->heap()->the_hole_value());
+  obj->set(PropertyDescriptorObject::kGetIndex,
+           has_get() ? *get_ : isolate->heap()->the_hole_value());
+  obj->set(PropertyDescriptorObject::kSetIndex,
+           has_set() ? *set_ : isolate->heap()->the_hole_value());
+
+  return obj;
 }
 
 }  // namespace internal

@@ -14,7 +14,6 @@
 namespace v8 {
 namespace internal {
 
-
 SimpleStringBuilder::SimpleStringBuilder(int size) {
   buffer_ = Vector<char>::New(size);
   position_ = 0;
@@ -76,8 +75,7 @@ char* SimpleStringBuilder::Finalize() {
   return buffer_.start();
 }
 
-
-std::ostream& operator<<(std::ostream& os, FeedbackVectorSlot slot) {
+std::ostream& operator<<(std::ostream& os, FeedbackSlot slot) {
   return os << "#" << slot.id_;
 }
 
@@ -152,19 +150,19 @@ void Flush(FILE* out) {
 
 
 char* ReadLine(const char* prompt) {
-  char* result = NULL;
+  char* result = nullptr;
   char line_buf[256];
   int offset = 0;
   bool keep_going = true;
   fprintf(stdout, "%s", prompt);
   fflush(stdout);
   while (keep_going) {
-    if (fgets(line_buf, sizeof(line_buf), stdin) == NULL) {
+    if (fgets(line_buf, sizeof(line_buf), stdin) == nullptr) {
       // fgets got an error. Just give up.
-      if (result != NULL) {
+      if (result != nullptr) {
         DeleteArray(result);
       }
-      return NULL;
+      return nullptr;
     }
     int len = StrLength(line_buf);
     if (len > 1 &&
@@ -180,7 +178,7 @@ char* ReadLine(const char* prompt) {
       // will exit the loop after copying this buffer into the result.
       keep_going = false;
     }
-    if (result == NULL) {
+    if (result == nullptr) {
       // Allocate the initial result and make room for the terminating '\0'
       result = NewArray<char>(len + 1);
     } else {
@@ -197,7 +195,7 @@ char* ReadLine(const char* prompt) {
     MemCopy(result + offset, line_buf, len * kCharSize);
     offset += len;
   }
-  DCHECK(result != NULL);
+  DCHECK_NOT_NULL(result);
   result[offset] = '\0';
   return result;
 }
@@ -208,11 +206,11 @@ char* ReadCharsFromFile(FILE* file,
                         int extra_space,
                         bool verbose,
                         const char* filename) {
-  if (file == NULL || fseek(file, 0, SEEK_END) != 0) {
+  if (file == nullptr || fseek(file, 0, SEEK_END) != 0) {
     if (verbose) {
       base::OS::PrintError("Cannot read from file %s.\n", filename);
     }
-    return NULL;
+    return nullptr;
   }
 
   // Get the size of the file and rewind it.
@@ -225,7 +223,7 @@ char* ReadCharsFromFile(FILE* file,
     if (read != (*size - i) && ferror(file) != 0) {
       fclose(file);
       DeleteArray(result);
-      return NULL;
+      return nullptr;
     }
     i += read;
   }
@@ -239,7 +237,7 @@ char* ReadCharsFromFile(const char* filename,
                         bool verbose) {
   FILE* file = base::OS::FOpen(filename, "rb");
   char* result = ReadCharsFromFile(file, size, extra_space, verbose, filename);
-  if (file != NULL) fclose(file);
+  if (file != nullptr) fclose(file);
   return result;
 }
 
@@ -300,7 +298,7 @@ int AppendChars(const char* filename,
                 int size,
                 bool verbose) {
   FILE* f = base::OS::FOpen(filename, "ab");
-  if (f == NULL) {
+  if (f == nullptr) {
     if (verbose) {
       base::OS::PrintError("Cannot open file %s for writing.\n", filename);
     }
@@ -317,7 +315,7 @@ int WriteChars(const char* filename,
                int size,
                bool verbose) {
   FILE* f = base::OS::FOpen(filename, "wb");
-  if (f == NULL) {
+  if (f == nullptr) {
     if (verbose) {
       base::OS::PrintError("Cannot open file %s for writing.\n", filename);
     }
@@ -357,8 +355,7 @@ void StringBuilder::AddFormattedList(const char* format, va_list list) {
   }
 }
 
-
-#if V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X87
+#if V8_TARGET_ARCH_IA32
 static void MemMoveWrapper(void* dest, const void* src, size_t size) {
   memmove(dest, src, size);
 }
@@ -387,8 +384,8 @@ void MemCopyUint16Uint8Wrapper(uint16_t* dest, const uint8_t* src,
   }
 }
 
-
-MemCopyUint8Function memcopy_uint8_function = &MemCopyUint8Wrapper;
+V8_EXPORT_PRIVATE MemCopyUint8Function memcopy_uint8_function =
+    &MemCopyUint8Wrapper;
 MemCopyUint16Uint8Function memcopy_uint16_uint8_function =
     &MemCopyUint16Uint8Wrapper;
 // Defined in codegen-arm.cc.
@@ -398,7 +395,8 @@ MemCopyUint16Uint8Function CreateMemCopyUint16Uint8Function(
     Isolate* isolate, MemCopyUint16Uint8Function stub);
 
 #elif V8_OS_POSIX && V8_HOST_ARCH_MIPS
-MemCopyUint8Function memcopy_uint8_function = &MemCopyUint8Wrapper;
+V8_EXPORT_PRIVATE MemCopyUint8Function memcopy_uint8_function =
+    &MemCopyUint8Wrapper;
 // Defined in codegen-mips.cc.
 MemCopyUint8Function CreateMemCopyUint8Function(Isolate* isolate,
                                                 MemCopyUint8Function stub);
@@ -411,9 +409,9 @@ static bool g_memcopy_functions_initialized = false;
 void init_memcopy_functions(Isolate* isolate) {
   if (g_memcopy_functions_initialized) return;
   g_memcopy_functions_initialized = true;
-#if V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X87
+#if V8_TARGET_ARCH_IA32
   MemMoveFunction generated_memmove = CreateMemMoveFunction(isolate);
-  if (generated_memmove != NULL) {
+  if (generated_memmove != nullptr) {
     memmove_function = generated_memmove;
   }
 #elif V8_OS_POSIX && V8_HOST_ARCH_ARM
@@ -430,11 +428,8 @@ void init_memcopy_functions(Isolate* isolate) {
 
 bool DoubleToBoolean(double d) {
   // NaN, +0, and -0 should return the false object
-#if V8_TARGET_LITTLE_ENDIAN
-  union IeeeDoubleLittleEndianArchType u;
-#else
-  union IeeeDoubleBigEndianArchType u;
-#endif
+  IeeeDoubleArchType u;
+
   u.d = d;
   if (u.bits.exp == 2047) {
     // Detect NaN for IEEE double precision floating point.

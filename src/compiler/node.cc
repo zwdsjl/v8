@@ -193,6 +193,22 @@ void Node::InsertInput(Zone* zone, int index, Node* new_to) {
   Verify();
 }
 
+void Node::InsertInputs(Zone* zone, int index, int count) {
+  DCHECK_NOT_NULL(zone);
+  DCHECK_LE(0, index);
+  DCHECK_LT(0, count);
+  DCHECK_LT(index, InputCount());
+  for (int i = 0; i < count; i++) {
+    AppendInput(zone, InputAt(Max(InputCount() - count, 0)));
+  }
+  for (int i = InputCount() - count - 1; i >= Max(index, count); --i) {
+    ReplaceInput(i, InputAt(i - count));
+  }
+  for (int i = 0; i < count; i++) {
+    ReplaceInput(index + i, nullptr);
+  }
+  Verify();
+}
 
 void Node::RemoveInput(int index) {
   DCHECK_LE(0, index);
@@ -280,12 +296,44 @@ bool Node::OwnedBy(Node const* owner1, Node const* owner2) const {
   return mask == 3;
 }
 
+bool Node::OwnedByAddressingOperand() const {
+  for (Use* use = first_use_; use; use = use->next) {
+    Node* from = use->from();
+    if (from->opcode() != IrOpcode::kLoad &&
+        // If {from} is store, make sure it does not use {this} as value
+        (from->opcode() != IrOpcode::kStore || from->InputAt(2) == this) &&
+        from->opcode() != IrOpcode::kInt32Add &&
+        from->opcode() != IrOpcode::kInt64Add) {
+      return false;
+    }
+  }
+  return true;
+}
 
 void Node::Print() const {
   OFStream os(stdout);
   os << *this << std::endl;
+  for (Node* input : this->inputs()) {
+    os << "  " << *input << std::endl;
+  }
 }
 
+std::ostream& operator<<(std::ostream& os, const Node& n) {
+  os << n.id() << ": " << *n.op();
+  if (n.InputCount() > 0) {
+    os << "(";
+    for (int i = 0; i < n.InputCount(); ++i) {
+      if (i != 0) os << ", ";
+      if (n.InputAt(i)) {
+        os << n.InputAt(i)->id();
+      } else {
+        os << "null";
+      }
+    }
+    os << ")";
+  }
+  return os;
+}
 
 Node::Node(NodeId id, const Operator* op, int inline_count, int inline_capacity)
     : op_(op),
@@ -295,7 +343,7 @@ Node::Node(NodeId id, const Operator* op, int inline_count, int inline_capacity)
                  InlineCapacityField::encode(inline_capacity)),
       first_use_(nullptr) {
   // Inputs must either be out of line or within the inline capacity.
-  DCHECK(inline_capacity <= kMaxInlineCapacity);
+  DCHECK_GE(kMaxInlineCapacity, inline_capacity);
   DCHECK(inline_count == kOutlineMarker || inline_count <= inline_capacity);
 }
 
@@ -335,47 +383,32 @@ void Node::Verify() {
   if (count > 200 && count % 100) return;
 
   for (int i = 0; i < count; i++) {
-    CHECK_EQ(i, this->GetUsePtr(i)->input_index());
-    CHECK_EQ(this->GetInputPtr(i), this->GetUsePtr(i)->input_ptr());
-    CHECK_EQ(count, this->InputCount());
+    DCHECK_EQ(i, this->GetUsePtr(i)->input_index());
+    DCHECK_EQ(this->GetInputPtr(i), this->GetUsePtr(i)->input_ptr());
+    DCHECK_EQ(count, this->InputCount());
   }
   {  // Direct input iteration.
     int index = 0;
     for (Node* input : this->inputs()) {
-      CHECK_EQ(this->InputAt(index), input);
+      DCHECK_EQ(this->InputAt(index), input);
       index++;
     }
-    CHECK_EQ(count, index);
-    CHECK_EQ(this->InputCount(), index);
+    DCHECK_EQ(count, index);
+    DCHECK_EQ(this->InputCount(), index);
   }
   {  // Input edge iteration.
     int index = 0;
     for (Edge edge : this->input_edges()) {
-      CHECK_EQ(edge.from(), this);
-      CHECK_EQ(index, edge.index());
-      CHECK_EQ(this->InputAt(index), edge.to());
+      DCHECK_EQ(edge.from(), this);
+      DCHECK_EQ(index, edge.index());
+      DCHECK_EQ(this->InputAt(index), edge.to());
       index++;
     }
-    CHECK_EQ(count, index);
-    CHECK_EQ(this->InputCount(), index);
+    DCHECK_EQ(count, index);
+    DCHECK_EQ(this->InputCount(), index);
   }
 }
 #endif
-
-
-std::ostream& operator<<(std::ostream& os, const Node& n) {
-  os << n.id() << ": " << *n.op();
-  if (n.InputCount() > 0) {
-    os << "(";
-    for (int i = 0; i < n.InputCount(); ++i) {
-      if (i != 0) os << ", ";
-      os << n.InputAt(i)->id();
-    }
-    os << ")";
-  }
-  return os;
-}
-
 
 Node::InputEdges::iterator Node::InputEdges::iterator::operator++(int n) {
   iterator result(*this);
@@ -384,17 +417,11 @@ Node::InputEdges::iterator Node::InputEdges::iterator::operator++(int n) {
 }
 
 
-bool Node::InputEdges::empty() const { return begin() == end(); }
-
-
 Node::Inputs::const_iterator Node::Inputs::const_iterator::operator++(int n) {
   const_iterator result(*this);
   ++(*this);
   return result;
 }
-
-
-bool Node::Inputs::empty() const { return begin() == end(); }
 
 
 Node::UseEdges::iterator Node::UseEdges::iterator::operator++(int n) {

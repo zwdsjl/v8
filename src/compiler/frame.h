@@ -6,7 +6,7 @@
 #define V8_COMPILER_FRAME_H_
 
 #include "src/bit-vector.h"
-#include "src/frames.h"
+#include "src/frame-constants.h"
 
 namespace v8 {
 namespace internal {
@@ -78,36 +78,19 @@ class CallDescriptor;
 //
 class Frame : public ZoneObject {
  public:
-  explicit Frame(int fixed_frame_size_in_slots,
-                 const CallDescriptor* descriptor);
-
-  inline bool needs_frame() const { return needs_frame_; }
-  inline void MarkNeedsFrame() { needs_frame_ = true; }
+  explicit Frame(int fixed_frame_size_in_slots);
 
   inline int GetTotalFrameSlotCount() const { return frame_slot_count_; }
 
-  inline int GetSPToFPSlotCount() const {
-    return GetTotalFrameSlotCount() -
-           StandardFrameConstants::kFixedSlotCountAboveFp;
-  }
-  inline int GetSavedCalleeRegisterSlotCount() const {
-    return callee_saved_slot_count_;
-  }
   inline int GetSpillSlotCount() const { return spill_slot_count_; }
 
-  inline void SetElidedFrameSizeInSlots(int slots) {
-    DCHECK_EQ(0, callee_saved_slot_count_);
-    DCHECK_EQ(0, spill_slot_count_);
-    frame_slot_count_ = slots;
-  }
-
   void SetAllocatedRegisters(BitVector* regs) {
-    DCHECK(allocated_registers_ == nullptr);
+    DCHECK_NULL(allocated_registers_);
     allocated_registers_ = regs;
   }
 
   void SetAllocatedDoubleRegisters(BitVector* regs) {
-    DCHECK(allocated_double_registers_ == nullptr);
+    DCHECK_NULL(allocated_double_registers_);
     allocated_double_registers_ = regs;
   }
 
@@ -115,38 +98,39 @@ class Frame : public ZoneObject {
     return !allocated_double_registers_->IsEmpty();
   }
 
-  int AlignSavedCalleeRegisterSlots(int alignment = kDoubleSize) {
-    DCHECK_EQ(0, callee_saved_slot_count_);
+  void AlignSavedCalleeRegisterSlots(int alignment = kDoubleSize) {
     int alignment_slots = alignment / kPointerSize;
     int delta = alignment_slots - (frame_slot_count_ & (alignment_slots - 1));
     if (delta != alignment_slots) {
-      DCHECK(needs_frame_);
       frame_slot_count_ += delta;
     }
-    return delta;
+    spill_slot_count_ += delta;
   }
 
   void AllocateSavedCalleeRegisterSlots(int count) {
-    needs_frame_ = true;
     frame_slot_count_ += count;
-    callee_saved_slot_count_ += count;
   }
 
-  int AllocateSpillSlot(int width) {
-    DCHECK_EQ(0, callee_saved_slot_count_);
-    needs_frame_ = true;
+  int AllocateSpillSlot(int width, int alignment = 0) {
     int frame_slot_count_before = frame_slot_count_;
-    int slot = AllocateAlignedFrameSlot(width);
-    spill_slot_count_ += (frame_slot_count_ - frame_slot_count_before);
-    return slot;
+    if (alignment <= kPointerSize) {
+      AllocateAlignedFrameSlots(width);
+    } else {
+      // We need to allocate more place for spill slot
+      // in case we need an aligned spill slot to be
+      // able to properly align start of spill slot
+      // and still have enough place to hold all the
+      // data
+      AllocateAlignedFrameSlots(width + alignment - kPointerSize);
+    }
+    spill_slot_count_ += frame_slot_count_ - frame_slot_count_before;
+    return frame_slot_count_ - 1;
   }
 
   int AlignFrame(int alignment = kDoubleSize);
 
   int ReserveSpillSlots(size_t slot_count) {
-    DCHECK_EQ(0, callee_saved_slot_count_);
     DCHECK_EQ(0, spill_slot_count_);
-    needs_frame_ = true;
     spill_slot_count_ += static_cast<int>(slot_count);
     frame_slot_count_ += static_cast<int>(slot_count);
     return frame_slot_count_ - 1;
@@ -156,21 +140,19 @@ class Frame : public ZoneObject {
   static const int kJSFunctionSlot = 3 + StandardFrameConstants::kCPSlotCount;
 
  private:
-  int AllocateAlignedFrameSlot(int width) {
-    DCHECK(width == 4 || width == 8);
-    // Skip one slot if necessary.
-    if (width > kPointerSize) {
-      DCHECK(width == kPointerSize * 2);
-      frame_slot_count_++;
-      frame_slot_count_ |= 1;
-    }
-    return frame_slot_count_++;
+  void AllocateAlignedFrameSlots(int width) {
+    DCHECK_LT(0, width);
+    int new_frame_slots = (width + kPointerSize - 1) / kPointerSize;
+    // Align to 8 bytes if width is a multiple of 8 bytes, and to 16 bytes if
+    // multiple of 16.
+    int align_to = (width & 15) == 0 ? 16 : (width & 7) == 0 ? 8 : kPointerSize;
+    frame_slot_count_ =
+        RoundUp(frame_slot_count_ + new_frame_slots, align_to / kPointerSize);
+    DCHECK_LT(0, frame_slot_count_);
   }
 
  private:
-  bool needs_frame_;
   int frame_slot_count_;
-  int callee_saved_slot_count_;
   int spill_slot_count_;
   BitVector* allocated_registers_;
   BitVector* allocated_double_registers_;
@@ -187,12 +169,12 @@ class FrameOffset {
   inline int offset() { return offset_ & ~1; }
 
   inline static FrameOffset FromStackPointer(int offset) {
-    DCHECK((offset & 1) == 0);
+    DCHECK_EQ(0, offset & 1);
     return FrameOffset(offset | kFromSp);
   }
 
   inline static FrameOffset FromFramePointer(int offset) {
-    DCHECK((offset & 1) == 0);
+    DCHECK_EQ(0, offset & 1);
     return FrameOffset(offset | kFromFp);
   }
 
@@ -209,24 +191,34 @@ class FrameOffset {
 // current function's frame.
 class FrameAccessState : public ZoneObject {
  public:
-  explicit FrameAccessState(Frame* const frame)
-      : frame_(frame), access_frame_with_fp_(false), sp_delta_(0) {
-    SetFrameAccessToDefault();
-  }
+  explicit FrameAccessState(const Frame* const frame)
+      : frame_(frame),
+        access_frame_with_fp_(false),
+        sp_delta_(0),
+        has_frame_(false) {}
 
-  Frame* frame() const { return frame_; }
+  const Frame* frame() const { return frame_; }
+  void MarkHasFrame(bool state);
 
   int sp_delta() const { return sp_delta_; }
   void ClearSPDelta() { sp_delta_ = 0; }
   void IncreaseSPDelta(int amount) { sp_delta_ += amount; }
 
   bool access_frame_with_fp() const { return access_frame_with_fp_; }
+
+  // Regardless of how we access slots on the stack - using sp or fp - do we
+  // have a frame, at the current stage in code generation.
+  bool has_frame() const { return has_frame_; }
+
   void SetFrameAccessToDefault();
   void SetFrameAccessToFP() { access_frame_with_fp_ = true; }
   void SetFrameAccessToSP() { access_frame_with_fp_ = false; }
 
   int GetSPToFPSlotCount() const {
-    return frame_->GetSPToFPSlotCount() + sp_delta();
+    int frame_slot_count =
+        (has_frame() ? frame()->GetTotalFrameSlotCount() : kElidedFrameSlots) -
+        StandardFrameConstants::kFixedSlotCountAboveFp;
+    return frame_slot_count + sp_delta();
   }
   int GetSPToFPOffset() const { return GetSPToFPSlotCount() * kPointerSize; }
 
@@ -237,9 +229,10 @@ class FrameAccessState : public ZoneObject {
   FrameOffset GetFrameOffset(int spill_slot) const;
 
  private:
-  Frame* const frame_;
+  const Frame* const frame_;
   bool access_frame_with_fp_;
   int sp_delta_;
+  bool has_frame_;
 };
 }  // namespace compiler
 }  // namespace internal

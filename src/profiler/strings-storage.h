@@ -5,8 +5,11 @@
 #ifndef V8_PROFILER_STRINGS_STORAGE_H_
 #define V8_PROFILER_STRINGS_STORAGE_H_
 
+#include <stdarg.h>
+
 #include "src/allocation.h"
-#include "src/hashmap.h"
+#include "src/base/compiler-specific.h"
+#include "src/base/hashmap.h"
 
 namespace v8 {
 namespace internal {
@@ -19,26 +22,27 @@ class StringsStorage {
   ~StringsStorage();
 
   const char* GetCopy(const char* src);
-  const char* GetFormatted(const char* format, ...);
+  PRINTF_FORMAT(2, 3) const char* GetFormatted(const char* format, ...);
+  PRINTF_FORMAT(2, 0)
   const char* GetVFormatted(const char* format, va_list args);
   const char* GetName(Name* name);
   const char* GetName(int index);
   const char* GetFunctionName(Name* name);
   const char* GetFunctionName(const char* name);
-  size_t GetUsedMemorySize() const;
 
  private:
   static const int kMaxNameSize = 1024;
 
   static bool StringsMatch(void* key1, void* key2);
   const char* AddOrDisposeString(char* str, int len);
-  HashMap::Entry* GetEntry(const char* str, int len);
+  base::CustomMatcherHashMap::Entry* GetEntry(const char* str, int len);
 
   uint32_t hash_seed_;
-  HashMap names_;
+  base::CustomMatcherHashMap names_;
 
   DISALLOW_COPY_AND_ASSIGN(StringsStorage);
 };
+
 }  // namespace internal
 }  // namespace v8
 

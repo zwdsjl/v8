@@ -27,8 +27,6 @@
 
 
 import os
-import shutil
-import subprocess
 
 from testrunner.local import testsuite
 from testrunner.objects import testcase
@@ -83,11 +81,8 @@ class MozillaTestSuite(testsuite.TestSuite):
             tests.append(case)
     return tests
 
-  def GetFlagsForTestCase(self, testcase, context):
-    result = []
-    result += context.mode_flags
-    result += ["--expose-gc"]
-    result += [os.path.join(self.root, "mozilla-shell-emulation.js")]
+  def GetParametersForTestCase(self, testcase, context):
+    files = [os.path.join(self.root, "mozilla-shell-emulation.js")]
     testfilename = testcase.path + ".js"
     testfilepath = testfilename.split("/")
     for i in xrange(len(testfilepath)):
@@ -95,9 +90,10 @@ class MozillaTestSuite(testsuite.TestSuite):
                             reduce(os.path.join, testfilepath[:i], ""),
                             "shell.js")
       if os.path.exists(script):
-        result.append(script)
-    result.append(os.path.join(self.testroot, testfilename))
-    return testcase.flags + result
+        files.append(script)
+    files.append(os.path.join(self.testroot, testfilename))
+    flags = testcase.flags + context.mode_flags + ["--expose-gc"]
+    return files, flags
 
   def GetSourceForTest(self, testcase):
     filename = os.path.join(self.testroot, testcase.path + ".js")
@@ -111,21 +107,6 @@ class MozillaTestSuite(testsuite.TestSuite):
     if testcase.output.exit_code != 0:
       return True
     return "FAILED!" in testcase.output.stdout
-
-  def DownloadData(self):
-    print "Mozilla download is deprecated. It's part of DEPS."
-
-    # Clean up old directories and archive files.
-    directory_old_name = os.path.join(self.root, "data.old")
-    if os.path.exists(directory_old_name):
-      shutil.rmtree(directory_old_name)
-
-    archive_files = [f for f in os.listdir(self.root)
-                     if f.startswith("downloaded_")]
-    if len(archive_files) > 0:
-      print "Clobber outdated test archives ..."
-      for f in archive_files:
-        os.remove(os.path.join(self.root, f))
 
 
 def GetSuite(name, root):

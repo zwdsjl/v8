@@ -34,7 +34,8 @@
 #include "src/s390/simulator-s390.h"
 #include "test/cctest/cctest.h"
 
-using namespace v8::internal;
+namespace v8 {
+namespace internal {
 
 // Define these function prototypes to match JSEntryFunction in execution.cc.
 typedef Object* (*F1)(int x, int p1, int p2, int p3, int p4);
@@ -50,7 +51,7 @@ TEST(0) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   __ lhi(r1, Operand(3));    // test 4-byte instr
   __ llilf(r2, Operand(4));  // test 6-byte instr
@@ -59,9 +60,9 @@ TEST(0) {
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -78,7 +79,7 @@ TEST(1) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
   Label L, C;
 
 #if defined(_AIX)
@@ -99,9 +100,9 @@ TEST(1) {
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -119,7 +120,7 @@ TEST(2) {
 
   // Create a function that accepts &t, and loads, manipulates, and stores
   // the doubles and floats.
-  Assembler assm(CcTest::i_isolate(), NULL, 0);
+  Assembler assm(CcTest::i_isolate(), nullptr, 0);
   Label L, C;
 
 #if defined(_AIX)
@@ -151,9 +152,9 @@ TEST(2) {
   __ iilf(r0, Operand(0xFFF0FFFF));
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -169,7 +170,7 @@ TEST(3) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
 
   __ ar(r14, r13);
   __ sr(r14, r13);
@@ -194,22 +195,22 @@ TEST(3) {
   __ ay(r13, MemOperand(r1, r2, 123));
   __ brc(Condition(14), Operand(123));
   __ brc(Condition(14), Operand(-123));
-  __ brcl(Condition(14), Operand(123), false);
-  __ brcl(Condition(14), Operand(-123), false);
+  __ brcl(Condition(14), Operand(123));
+  __ brcl(Condition(14), Operand(-123));
   __ iilf(r13, Operand(123456789));
   __ iihf(r13, Operand(-123456789));
   __ mvc(MemOperand(r0, 123), MemOperand(r4, 567), 89);
   __ sll(r13, Operand(10));
 
   v8::internal::byte* bufPos = assm.buffer_pos();
-  ::printf("buffer position = %p", bufPos);
+  ::printf("buffer position = %p", static_cast<void*>(bufPos));
   ::fflush(stdout);
   // OS::DebugBreak();
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -223,7 +224,7 @@ TEST(4) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  Assembler assm(isolate, NULL, 0);
+  Assembler assm(isolate, nullptr, 0);
   Label L2, L3, L4;
 
   __ chi(r2, Operand(10));
@@ -248,9 +249,9 @@ TEST(4) {
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(isolate, &desc);
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+      desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -268,7 +269,7 @@ TEST(5) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  MacroAssembler assm(isolate, NULL, 0);
+  MacroAssembler assm(isolate, nullptr, 0);
 
   __ mov(r2, Operand(0x12345678));
   __ ExtractBitRange(r3, r2, 3, 2);
@@ -276,9 +277,9 @@ TEST(5) {
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(isolate, &desc);
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+      desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -296,7 +297,7 @@ TEST(6) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  MacroAssembler assm(isolate, NULL, 0);
+  MacroAssembler assm(isolate, nullptr, 0);
 
   Label yes;
 
@@ -310,9 +311,9 @@ TEST(6) {
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(isolate, &desc);
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+      desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -330,7 +331,7 @@ TEST(7) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  MacroAssembler assm(isolate, NULL, 0);
+  MacroAssembler assm(isolate, nullptr, 0);
 
   Label yes;
 
@@ -342,9 +343,9 @@ TEST(7) {
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(isolate, &desc);
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+      desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -362,7 +363,7 @@ TEST(8) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  MacroAssembler assm(isolate, NULL, 0);
+  MacroAssembler assm(isolate, nullptr, 0);
 
   // Zero upper bits of r3/r4
   __ llihf(r3, Operand::Zero());
@@ -373,9 +374,9 @@ TEST(8) {
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(isolate, &desc);
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+      desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -394,15 +395,15 @@ TEST(9) {
   Isolate* isolate = CcTest::i_isolate();
   HandleScope scope(isolate);
 
-  MacroAssembler assm(isolate, NULL, 0);
+  MacroAssembler assm(isolate, nullptr, 0);
 
   __ lzdr(d4);
   __ b(r14);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(isolate, &desc);
   Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+      desc, Code::STUB, Handle<Code>());
 #ifdef DEBUG
   code->Print();
 #endif
@@ -413,4 +414,92 @@ TEST(9) {
 }
 #endif
 
+// Test msrkc and msgrkc
+TEST(10) {
+  if (!CpuFeatures::IsSupported(MISC_INSTR_EXT2)) {
+    return;
+  }
+
+  ::printf("MISC_INSTR_EXT2 is enabled.\n");
+
+  CcTest::InitializeVM();
+  Isolate* isolate = CcTest::i_isolate();
+  HandleScope scope(isolate);
+
+  Assembler assm(isolate, nullptr, 0);
+
+  Label ok, failed;
+
+  {  // test 1: msrkc
+    __ lgfi(r2, Operand(3));
+    __ lgfi(r3, Operand(4));
+    __ msrkc(r1, r2, r3);                                  // 3 * 4
+    __ b(static_cast<Condition>(le | overflow), &failed);  // test failed.
+    __ chi(r1, Operand(12));
+    __ bne(&failed);  // test failed.
+
+    __ lgfi(r2, Operand(-3));
+    __ lgfi(r3, Operand(4));
+    __ msrkc(r1, r2, r3);                                  // -3 * 4
+    __ b(static_cast<Condition>(ge | overflow), &failed);  // test failed.
+    __ chi(r1, Operand(-12));
+    __ bne(&failed);  // test failed.
+
+    __ iilf(r2, Operand(0x80000000));
+    __ lgfi(r3, Operand(-1));
+    __ msrkc(r1, r2, r3);       // INT_MIN * -1
+    __ b(nooverflow, &failed);  // test failed.
+    __ cfi(r1, Operand(0x80000000));
+    __ bne(&failed);  // test failed.
+  }
+
+  {  // test 1: msgrkc
+    __ lgfi(r2, Operand(3));
+    __ lgfi(r3, Operand(4));
+    __ msgrkc(r1, r2, r3);                                 // 3 * 4
+    __ b(static_cast<Condition>(le | overflow), &failed);  // test failed.
+    __ chi(r1, Operand(12));
+    __ bne(&failed);  // test failed.
+
+    __ lgfi(r2, Operand(-3));
+    __ lgfi(r3, Operand(4));
+    __ msgrkc(r1, r2, r3);                                 // -3 * 4
+    __ b(static_cast<Condition>(ge | overflow), &failed);  // test failed.
+    __ chi(r1, Operand(-12));
+    __ bne(&failed);  // test failed.
+
+    __ lgfi(r2, Operand::Zero());
+    __ iihf(r2, Operand(0x80000000));
+    __ lgfi(r3, Operand(-1));
+    __ msgrkc(r1, r2, r3);      // INT_MIN * -1
+    __ b(nooverflow, &failed);  // test failed.
+    __ cgr(r1, r2);
+    __ bne(&failed);  // test failed.
+  }
+
+  __ bind(&ok);
+  __ lgfi(r2, Operand::Zero());
+  __ b(r14);  // test done.
+
+  __ bind(&failed);
+  __ lgfi(r2, Operand(1));
+  __ b(r14);
+
+  CodeDesc desc;
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
+#ifdef DEBUG
+  code->Print();
+#endif
+  F2 f = FUNCTION_CAST<F2>(code->entry());
+  intptr_t res = reinterpret_cast<intptr_t>(
+      CALL_GENERATED_CODE(isolate, f, 3, 4, 0, 0, 0));
+  ::printf("f() = %" V8PRIxPTR "\n", res);
+  CHECK_EQ(0, static_cast<int>(res));
+}
+
 #undef __
+
+}  // namespace internal
+}  // namespace v8

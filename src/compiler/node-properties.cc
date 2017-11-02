@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/compiler/node-properties.h"
 #include "src/compiler/common-operator.h"
 #include "src/compiler/graph.h"
 #include "src/compiler/js-operator.h"
 #include "src/compiler/linkage.h"
-#include "src/compiler/node-properties.h"
+#include "src/compiler/node-matchers.h"
 #include "src/compiler/operator-properties.h"
+#include "src/compiler/simplified-operator.h"
 #include "src/compiler/verifier.h"
 #include "src/handles-inl.h"
 
@@ -62,9 +64,9 @@ Node* NodeProperties::GetContextInput(Node* node) {
 
 
 // static
-Node* NodeProperties::GetFrameStateInput(Node* node, int index) {
-  DCHECK_LT(index, OperatorProperties::GetFrameStateInputCount(node->op()));
-  return node->InputAt(FirstFrameStateIndex(node) + index);
+Node* NodeProperties::GetFrameStateInput(Node* node) {
+  DCHECK_EQ(1, OperatorProperties::GetFrameStateInputCount(node->op()));
+  return node->InputAt(FirstFrameStateIndex(node));
 }
 
 
@@ -123,15 +125,30 @@ bool NodeProperties::IsControlEdge(Edge edge) {
 
 
 // static
-bool NodeProperties::IsExceptionalCall(Node* node) {
+bool NodeProperties::IsExceptionalCall(Node* node, Node** out_exception) {
   if (node->op()->HasProperty(Operator::kNoThrow)) return false;
   for (Edge const edge : node->use_edges()) {
     if (!NodeProperties::IsControlEdge(edge)) continue;
-    if (edge.from()->opcode() == IrOpcode::kIfException) return true;
+    if (edge.from()->opcode() == IrOpcode::kIfException) {
+      if (out_exception != nullptr) *out_exception = edge.from();
+      return true;
+    }
   }
   return false;
 }
 
+// static
+Node* NodeProperties::FindSuccessfulControlProjection(Node* node) {
+  DCHECK_GT(node->op()->ControlOutputCount(), 0);
+  if (node->op()->HasProperty(Operator::kNoThrow)) return node;
+  for (Edge const edge : node->use_edges()) {
+    if (!NodeProperties::IsControlEdge(edge)) continue;
+    if (edge.from()->opcode() == IrOpcode::kIfSuccess) {
+      return edge.from();
+    }
+  }
+  return node;
+}
 
 // static
 void NodeProperties::ReplaceValueInput(Node* node, Node* value, int index) {
@@ -158,8 +175,9 @@ void NodeProperties::ReplaceContextInput(Node* node, Node* context) {
 
 
 // static
-void NodeProperties::ReplaceControlInput(Node* node, Node* control) {
-  node->ReplaceInput(FirstControlIndex(node), control);
+void NodeProperties::ReplaceControlInput(Node* node, Node* control, int index) {
+  DCHECK(index < node->op()->ControlInputCount());
+  node->ReplaceInput(FirstControlIndex(node) + index, control);
 }
 
 
@@ -171,17 +189,9 @@ void NodeProperties::ReplaceEffectInput(Node* node, Node* effect, int index) {
 
 
 // static
-void NodeProperties::ReplaceFrameStateInput(Node* node, int index,
-                                            Node* frame_state) {
-  DCHECK_LT(index, OperatorProperties::GetFrameStateInputCount(node->op()));
-  node->ReplaceInput(FirstFrameStateIndex(node) + index, frame_state);
-}
-
-
-// static
-void NodeProperties::RemoveFrameStateInput(Node* node, int index) {
-  DCHECK_LT(index, OperatorProperties::GetFrameStateInputCount(node->op()));
-  node->RemoveInput(FirstFrameStateIndex(node) + index);
+void NodeProperties::ReplaceFrameStateInput(Node* node, Node* frame_state) {
+  DCHECK_EQ(1, OperatorProperties::GetFrameStateInputCount(node->op()));
+  node->ReplaceInput(FirstFrameStateIndex(node), frame_state);
 }
 
 
@@ -221,7 +231,8 @@ void NodeProperties::ReplaceUses(Node* node, Node* value, Node* effect,
         DCHECK_NOT_NULL(exception);
         edge.UpdateTo(exception);
       } else {
-        UNREACHABLE();
+        DCHECK_NOT_NULL(success);
+        edge.UpdateTo(success);
       }
     } else if (IsEffectEdge(edge)) {
       DCHECK_NOT_NULL(effect);
@@ -242,6 +253,18 @@ void NodeProperties::ChangeOp(Node* node, const Operator* new_op) {
 
 
 // static
+Node* NodeProperties::FindFrameStateBefore(Node* node) {
+  Node* effect = NodeProperties::GetEffectInput(node);
+  while (effect->opcode() != IrOpcode::kCheckpoint) {
+    if (effect->opcode() == IrOpcode::kDead) return effect;
+    DCHECK_EQ(1, effect->op()->EffectInputCount());
+    effect = NodeProperties::GetEffectInput(effect);
+  }
+  Node* frame_state = GetFrameStateInput(effect);
+  return frame_state;
+}
+
+// static
 Node* NodeProperties::FindProjection(Node* node, size_t projection_index) {
   for (auto use : node->uses()) {
     if (use->opcode() == IrOpcode::kProjection &&
@@ -250,6 +273,23 @@ Node* NodeProperties::FindProjection(Node* node, size_t projection_index) {
     }
   }
   return nullptr;
+}
+
+
+// static
+void NodeProperties::CollectValueProjections(Node* node, Node** projections,
+                                             size_t projection_count) {
+#ifdef DEBUG
+  for (size_t index = 0; index < projection_count; ++index) {
+    DCHECK_NULL(projections[index]);
+  }
+#endif
+  for (Edge const edge : node->use_edges()) {
+    if (!IsValueEdge(edge)) continue;
+    Node* use = edge.from();
+    DCHECK_EQ(IrOpcode::kProjection, use->opcode());
+    projections[ProjectionIndexOf(use->op())] = use;
+  }
 }
 
 
@@ -305,100 +345,157 @@ void NodeProperties::CollectControlProjections(Node* node, Node** projections,
 #endif
 }
 
-
 // static
-MaybeHandle<Context> NodeProperties::GetSpecializationContext(
-    Node* node, MaybeHandle<Context> context) {
-  switch (node->opcode()) {
-    case IrOpcode::kHeapConstant:
-      return Handle<Context>::cast(OpParameter<Handle<HeapObject>>(node));
-    case IrOpcode::kParameter: {
-      Node* const start = NodeProperties::GetValueInput(node, 0);
-      DCHECK_EQ(IrOpcode::kStart, start->opcode());
-      int const index = ParameterIndexOf(node->op());
-      // The context is always the last parameter to a JavaScript function, and
-      // {Parameter} indices start at -1, so value outputs of {Start} look like
-      // this: closure, receiver, param0, ..., paramN, context.
-      if (index == start->op()->ValueOutputCount() - 2) {
-        return context;
-      }
-      break;
+bool NodeProperties::IsSame(Node* a, Node* b) {
+  for (;;) {
+    if (a->opcode() == IrOpcode::kCheckHeapObject) {
+      a = GetValueInput(a, 0);
+      continue;
     }
-    default:
-      break;
+    if (b->opcode() == IrOpcode::kCheckHeapObject) {
+      b = GetValueInput(b, 0);
+      continue;
+    }
+    return a == b;
   }
-  return MaybeHandle<Context>();
 }
 
-
 // static
-MaybeHandle<Context> NodeProperties::GetSpecializationNativeContext(
-    Node* node, MaybeHandle<Context> native_context) {
+NodeProperties::InferReceiverMapsResult NodeProperties::InferReceiverMaps(
+    Node* receiver, Node* effect, ZoneHandleSet<Map>* maps_return) {
+  HeapObjectMatcher m(receiver);
+  if (m.HasValue()) {
+    Handle<Map> receiver_map(m.Value()->map());
+    if (receiver_map->is_stable()) {
+      // The {receiver_map} is only reliable when we install a stability
+      // code dependency.
+      *maps_return = ZoneHandleSet<Map>(receiver_map);
+      return kUnreliableReceiverMaps;
+    }
+  }
+  InferReceiverMapsResult result = kReliableReceiverMaps;
   while (true) {
-    switch (node->opcode()) {
-      case IrOpcode::kJSLoadContext: {
-        ContextAccess const& access = ContextAccessOf(node->op());
-        if (access.index() != Context::NATIVE_CONTEXT_INDEX) {
-          return MaybeHandle<Context>();
+    switch (effect->opcode()) {
+      case IrOpcode::kMapGuard: {
+        Node* const object = GetValueInput(effect, 0);
+        if (IsSame(receiver, object)) {
+          *maps_return = MapGuardMapsOf(effect->op()).maps();
+          return result;
         }
-        // Skip over the intermediate contexts, we're only interested in the
-        // very last context in the context chain anyway.
-        node = NodeProperties::GetContextInput(node);
         break;
       }
-      case IrOpcode::kJSCreateBlockContext:
-      case IrOpcode::kJSCreateCatchContext:
-      case IrOpcode::kJSCreateFunctionContext:
-      case IrOpcode::kJSCreateModuleContext:
-      case IrOpcode::kJSCreateScriptContext:
-      case IrOpcode::kJSCreateWithContext: {
-        // Skip over the intermediate contexts, we're only interested in the
-        // very last context in the context chain anyway.
-        node = NodeProperties::GetContextInput(node);
+      case IrOpcode::kCheckMaps: {
+        Node* const object = GetValueInput(effect, 0);
+        if (IsSame(receiver, object)) {
+          *maps_return = CheckMapsParametersOf(effect->op()).maps();
+          return result;
+        }
         break;
       }
-      case IrOpcode::kHeapConstant: {
-        // Extract the native context from the actual {context}.
-        Handle<Context> context =
-            Handle<Context>::cast(OpParameter<Handle<HeapObject>>(node));
-        return handle(context->native_context());
-      }
-      case IrOpcode::kOsrValue: {
-        int const index = OpParameter<int>(node);
-        if (index == Linkage::kOsrContextSpillSlotIndex) {
-          return native_context;
+      case IrOpcode::kJSCreate: {
+        if (IsSame(receiver, effect)) {
+          HeapObjectMatcher mtarget(GetValueInput(effect, 0));
+          HeapObjectMatcher mnewtarget(GetValueInput(effect, 1));
+          if (mtarget.HasValue() && mnewtarget.HasValue()) {
+            Handle<JSFunction> original_constructor =
+                Handle<JSFunction>::cast(mnewtarget.Value());
+            if (original_constructor->has_initial_map()) {
+              Handle<Map> initial_map(original_constructor->initial_map());
+              if (initial_map->constructor_or_backpointer() ==
+                  *mtarget.Value()) {
+                *maps_return = ZoneHandleSet<Map>(initial_map);
+                return result;
+              }
+            }
+          }
+          // We reached the allocation of the {receiver}.
+          return kNoReceiverMaps;
         }
-        return MaybeHandle<Context>();
+        break;
       }
-      case IrOpcode::kParameter: {
-        Node* const start = NodeProperties::GetValueInput(node, 0);
-        DCHECK_EQ(IrOpcode::kStart, start->opcode());
-        int const index = ParameterIndexOf(node->op());
-        // The context is always the last parameter to a JavaScript function,
-        // and {Parameter} indices start at -1, so value outputs of {Start}
-        // look like this: closure, receiver, param0, ..., paramN, context.
-        if (index == start->op()->ValueOutputCount() - 2) {
-          return native_context;
+      case IrOpcode::kStoreField: {
+        // We only care about StoreField of maps.
+        Node* const object = GetValueInput(effect, 0);
+        FieldAccess const& access = FieldAccessOf(effect->op());
+        if (access.base_is_tagged == kTaggedBase &&
+            access.offset == HeapObject::kMapOffset) {
+          if (IsSame(receiver, object)) {
+            Node* const value = GetValueInput(effect, 1);
+            HeapObjectMatcher m(value);
+            if (m.HasValue()) {
+              *maps_return = ZoneHandleSet<Map>(Handle<Map>::cast(m.Value()));
+              return result;
+            }
+          }
+          // Without alias analysis we cannot tell whether this
+          // StoreField[map] affects {receiver} or not.
+          result = kUnreliableReceiverMaps;
         }
-        return MaybeHandle<Context>();
+        break;
       }
-      default:
-        return MaybeHandle<Context>();
+      case IrOpcode::kJSStoreMessage:
+      case IrOpcode::kJSStoreModule:
+      case IrOpcode::kStoreElement:
+      case IrOpcode::kStoreTypedElement: {
+        // These never change the map of objects.
+        break;
+      }
+      case IrOpcode::kFinishRegion: {
+        // FinishRegion renames the output of allocations, so we need
+        // to update the {receiver} that we are looking for, if the
+        // {receiver} matches the current {effect}.
+        if (IsSame(receiver, effect)) receiver = GetValueInput(effect, 0);
+        break;
+      }
+      default: {
+        DCHECK_EQ(1, effect->op()->EffectOutputCount());
+        if (effect->op()->EffectInputCount() != 1) {
+          // Didn't find any appropriate CheckMaps node.
+          return kNoReceiverMaps;
+        }
+        if (!effect->op()->HasProperty(Operator::kNoWrite)) {
+          // Without alias/escape analysis we cannot tell whether this
+          // {effect} affects {receiver} or not.
+          result = kUnreliableReceiverMaps;
+        }
+        break;
+      }
     }
+
+    // Stop walking the effect chain once we hit the definition of
+    // the {receiver} along the {effect}s.
+    if (IsSame(receiver, effect)) return kNoReceiverMaps;
+
+    // Continue with the next {effect}.
+    DCHECK_EQ(1, effect->op()->EffectInputCount());
+    effect = NodeProperties::GetEffectInput(effect);
   }
 }
-
 
 // static
-MaybeHandle<JSGlobalObject> NodeProperties::GetSpecializationGlobalObject(
-    Node* node, MaybeHandle<Context> native_context) {
-  Handle<Context> context;
-  if (GetSpecializationNativeContext(node, native_context).ToHandle(&context)) {
-    return handle(context->global_object());
+bool NodeProperties::NoObservableSideEffectBetween(Node* effect,
+                                                   Node* dominator) {
+  while (effect != dominator) {
+    if (effect->op()->EffectInputCount() == 1 &&
+        effect->op()->properties() & Operator::kNoWrite) {
+      effect = NodeProperties::GetEffectInput(effect);
+    } else {
+      return false;
+    }
   }
-  return MaybeHandle<JSGlobalObject>();
+  return true;
 }
 
+// static
+Node* NodeProperties::GetOuterContext(Node* node, size_t* depth) {
+  Node* context = NodeProperties::GetContextInput(node);
+  while (*depth > 0 &&
+         IrOpcode::IsContextChainExtendingOpcode(context->opcode())) {
+    context = NodeProperties::GetContextInput(context);
+    (*depth)--;
+  }
+  return context;
+}
 
 // static
 Type* NodeProperties::GetTypeOrAny(Node* node) {
@@ -421,6 +518,38 @@ bool NodeProperties::IsInputRange(Edge edge, int first, int num) {
   if (num == 0) return false;
   int const index = edge.index();
   return first <= index && index < first + num;
+}
+
+// static
+size_t NodeProperties::HashCode(Node* node) {
+  size_t h = base::hash_combine(node->op()->HashCode(), node->InputCount());
+  for (Node* input : node->inputs()) {
+    h = base::hash_combine(h, input->id());
+  }
+  return h;
+}
+
+// static
+bool NodeProperties::Equals(Node* a, Node* b) {
+  DCHECK_NOT_NULL(a);
+  DCHECK_NOT_NULL(b);
+  DCHECK_NOT_NULL(a->op());
+  DCHECK_NOT_NULL(b->op());
+  if (!a->op()->Equals(b->op())) return false;
+  if (a->InputCount() != b->InputCount()) return false;
+  Node::Inputs aInputs = a->inputs();
+  Node::Inputs bInputs = b->inputs();
+
+  auto aIt = aInputs.begin();
+  auto bIt = bInputs.begin();
+  auto aEnd = aInputs.end();
+
+  for (; aIt != aEnd; ++aIt, ++bIt) {
+    DCHECK_NOT_NULL(*aIt);
+    DCHECK_NOT_NULL(*bIt);
+    if ((*aIt)->id() != (*bIt)->id()) return false;
+  }
+  return true;
 }
 
 }  // namespace compiler

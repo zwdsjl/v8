@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "src/libplatform/default-platform.h"
+#include "src/base/platform/time.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 using testing::InSequence;
@@ -10,6 +11,7 @@ using testing::StrictMock;
 
 namespace v8 {
 namespace platform {
+namespace default_platform_unittest {
 
 namespace {
 
@@ -19,11 +21,20 @@ struct MockTask : public Task {
   MOCK_METHOD0(Die, void());
 };
 
+struct MockIdleTask : public IdleTask {
+  virtual ~MockIdleTask() { Die(); }
+  MOCK_METHOD1(Run, void(double deadline_in_seconds));
+  MOCK_METHOD0(Die, void());
+};
 
 class DefaultPlatformWithMockTime : public DefaultPlatform {
  public:
-  DefaultPlatformWithMockTime() : time_(0) {}
+  DefaultPlatformWithMockTime()
+      : DefaultPlatform(IdleTaskSupport::kEnabled), time_(0) {}
   double MonotonicallyIncreasingTime() override { return time_; }
+  double CurrentClockTimeMillis() override {
+    return time_ * base::Time::kMillisecondsPerSecond;
+  }
   void IncreaseTime(double seconds) { time_ += seconds; }
 
  private:
@@ -126,6 +137,36 @@ TEST(DefaultPlatformTest, PendingDelayedTasksAreDestroyedOnShutdown) {
   }
 }
 
+TEST(DefaultPlatformTest, RunIdleTasks) {
+  InSequence s;
 
+  int dummy;
+  Isolate* isolate = reinterpret_cast<Isolate*>(&dummy);
+
+  DefaultPlatformWithMockTime platform;
+
+  StrictMock<MockIdleTask>* task = new StrictMock<MockIdleTask>;
+  platform.CallIdleOnForegroundThread(isolate, task);
+  EXPECT_CALL(*task, Run(42.0 + 23.0));
+  EXPECT_CALL(*task, Die());
+  platform.IncreaseTime(23.0);
+  platform.RunIdleTasks(isolate, 42.0);
+}
+
+TEST(DefaultPlatformTest, PendingIdleTasksAreDestroyedOnShutdown) {
+  InSequence s;
+
+  int dummy;
+  Isolate* isolate = reinterpret_cast<Isolate*>(&dummy);
+
+  {
+    DefaultPlatformWithMockTime platform;
+    StrictMock<MockIdleTask>* task = new StrictMock<MockIdleTask>;
+    platform.CallIdleOnForegroundThread(isolate, task);
+    EXPECT_CALL(*task, Die());
+  }
+}
+
+}  // namespace default_platform_unittest
 }  // namespace platform
 }  // namespace v8

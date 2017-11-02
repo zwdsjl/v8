@@ -15,13 +15,39 @@
 #include <malloc.h>  // NOLINT
 #endif
 
+#if defined(LEAK_SANITIZER)
+#include <sanitizer/lsan_interface.h>
+#endif
+
 namespace v8 {
 namespace internal {
 
+namespace {
+
+void* AlignedAllocInternal(size_t size, size_t alignment) {
+  void* ptr;
+#if V8_OS_WIN
+  ptr = _aligned_malloc(size, alignment);
+#elif V8_LIBC_BIONIC
+  // posix_memalign is not exposed in some Android versions, so we fall back to
+  // memalign. See http://code.google.com/p/android/issues/detail?id=35391.
+  ptr = memalign(alignment, size);
+#else
+  if (posix_memalign(&ptr, alignment, size)) ptr = nullptr;
+#endif
+  return ptr;
+}
+
+}  // namespace
+
 void* Malloced::New(size_t size) {
   void* result = malloc(size);
-  if (result == NULL) {
-    V8::FatalProcessOutOfMemory("Malloced operator new");
+  if (result == nullptr) {
+    V8::GetCurrentPlatform()->OnCriticalMemoryPressure();
+    result = malloc(size);
+    if (result == nullptr) {
+      V8::FatalProcessOutOfMemory("Malloced operator new");
+    }
   }
   return result;
 }
@@ -30,34 +56,6 @@ void* Malloced::New(size_t size) {
 void Malloced::Delete(void* p) {
   free(p);
 }
-
-
-#ifdef DEBUG
-
-static void* invalid = static_cast<void*>(NULL);
-
-void* Embedded::operator new(size_t size) {
-  UNREACHABLE();
-  return invalid;
-}
-
-
-void Embedded::operator delete(void* p) {
-  UNREACHABLE();
-}
-
-
-void* AllStatic::operator new(size_t size) {
-  UNREACHABLE();
-  return invalid;
-}
-
-
-void AllStatic::operator delete(void* p) {
-  UNREACHABLE();
-}
-
-#endif
 
 
 char* StrDup(const char* str) {
@@ -81,18 +79,15 @@ char* StrNDup(const char* str, int n) {
 
 void* AlignedAlloc(size_t size, size_t alignment) {
   DCHECK_LE(V8_ALIGNOF(void*), alignment);
-  DCHECK(base::bits::IsPowerOfTwo64(alignment));
-  void* ptr;
-#if V8_OS_WIN
-  ptr = _aligned_malloc(size, alignment);
-#elif V8_LIBC_BIONIC
-  // posix_memalign is not exposed in some Android versions, so we fall back to
-  // memalign. See http://code.google.com/p/android/issues/detail?id=35391.
-  ptr = memalign(alignment, size);
-#else
-  if (posix_memalign(&ptr, alignment, size)) ptr = NULL;
-#endif
-  if (ptr == NULL) V8::FatalProcessOutOfMemory("AlignedAlloc");
+  DCHECK(base::bits::IsPowerOfTwo(alignment));
+  void* ptr = AlignedAllocInternal(size, alignment);
+  if (ptr == nullptr) {
+    V8::GetCurrentPlatform()->OnCriticalMemoryPressure();
+    ptr = AlignedAllocInternal(size, alignment);
+    if (ptr == nullptr) {
+      V8::FatalProcessOutOfMemory("AlignedAlloc");
+    }
+  }
   return ptr;
 }
 
@@ -106,6 +101,120 @@ void AlignedFree(void *ptr) {
 #else
   free(ptr);
 #endif
+}
+
+VirtualMemory::VirtualMemory() : address_(nullptr), size_(0) {}
+
+VirtualMemory::VirtualMemory(size_t size, void* hint)
+    : address_(base::OS::ReserveRegion(size, hint)), size_(size) {
+#if defined(LEAK_SANITIZER)
+  __lsan_register_root_region(address_, size_);
+#endif
+}
+
+VirtualMemory::VirtualMemory(size_t size, size_t alignment, void* hint)
+    : address_(nullptr), size_(0) {
+  address_ = base::OS::ReserveAlignedRegion(size, alignment, hint, &size_);
+#if defined(LEAK_SANITIZER)
+  __lsan_register_root_region(address_, size_);
+#endif
+}
+
+VirtualMemory::~VirtualMemory() {
+  if (IsReserved()) {
+    bool result = base::OS::ReleaseRegion(address(), size());
+    DCHECK(result);
+    USE(result);
+  }
+}
+
+void VirtualMemory::Reset() {
+  address_ = nullptr;
+  size_ = 0;
+}
+
+bool VirtualMemory::Commit(void* address, size_t size, bool is_executable) {
+  CHECK(InVM(address, size));
+  return base::OS::CommitRegion(address, size, is_executable);
+}
+
+bool VirtualMemory::Uncommit(void* address, size_t size) {
+  CHECK(InVM(address, size));
+  return base::OS::UncommitRegion(address, size);
+}
+
+bool VirtualMemory::Guard(void* address) {
+  CHECK(InVM(address, base::OS::CommitPageSize()));
+  base::OS::Guard(address, base::OS::CommitPageSize());
+  return true;
+}
+
+size_t VirtualMemory::ReleasePartial(void* free_start) {
+  DCHECK(IsReserved());
+  // Notice: Order is important here. The VirtualMemory object might live
+  // inside the allocated region.
+  const size_t free_size = size_ - (reinterpret_cast<size_t>(free_start) -
+                                    reinterpret_cast<size_t>(address_));
+  CHECK(InVM(free_start, free_size));
+  DCHECK_LT(address_, free_start);
+  DCHECK_LT(free_start, reinterpret_cast<void*>(
+                            reinterpret_cast<size_t>(address_) + size_));
+#if defined(LEAK_SANITIZER)
+  __lsan_unregister_root_region(address_, size_);
+  __lsan_register_root_region(address_, size_ - free_size);
+#endif
+  const bool result = base::OS::ReleasePartialRegion(free_start, free_size);
+  USE(result);
+  DCHECK(result);
+  size_ -= free_size;
+  return free_size;
+}
+
+void VirtualMemory::Release() {
+  DCHECK(IsReserved());
+  // Notice: Order is important here. The VirtualMemory object might live
+  // inside the allocated region.
+  void* address = address_;
+  size_t size = size_;
+  CHECK(InVM(address, size));
+  Reset();
+  bool result = base::OS::ReleaseRegion(address, size);
+  USE(result);
+  DCHECK(result);
+}
+
+void VirtualMemory::TakeControl(VirtualMemory* from) {
+  DCHECK(!IsReserved());
+  address_ = from->address_;
+  size_ = from->size_;
+  from->Reset();
+}
+
+bool AllocVirtualMemory(size_t size, void* hint, VirtualMemory* result) {
+  VirtualMemory first_try(size, hint);
+  if (first_try.IsReserved()) {
+    result->TakeControl(&first_try);
+    return true;
+  }
+
+  V8::GetCurrentPlatform()->OnCriticalMemoryPressure();
+  VirtualMemory second_try(size, hint);
+  result->TakeControl(&second_try);
+  return result->IsReserved();
+}
+
+bool AlignedAllocVirtualMemory(size_t size, size_t alignment, void* hint,
+                               VirtualMemory* result) {
+  VirtualMemory first_try(size, alignment, hint);
+  if (first_try.IsReserved()) {
+    result->TakeControl(&first_try);
+    return true;
+  }
+
+  V8::GetCurrentPlatform()->OnCriticalMemoryPressure();
+  VirtualMemory second_try(size, alignment, hint);
+  result->TakeControl(&second_try);
+  return result->IsReserved();
 }
 
 }  // namespace internal

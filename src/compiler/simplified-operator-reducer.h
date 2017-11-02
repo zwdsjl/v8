@@ -5,10 +5,17 @@
 #ifndef V8_COMPILER_SIMPLIFIED_OPERATOR_REDUCER_H_
 #define V8_COMPILER_SIMPLIFIED_OPERATOR_REDUCER_H_
 
+#include "src/base/compiler-specific.h"
 #include "src/compiler/graph-reducer.h"
+#include "src/globals.h"
 
 namespace v8 {
 namespace internal {
+
+// Forward declarations.
+class Factory;
+class Isolate;
+
 namespace compiler {
 
 // Forward declarations.
@@ -16,11 +23,15 @@ class JSGraph;
 class MachineOperatorBuilder;
 class SimplifiedOperatorBuilder;
 
-
-class SimplifiedOperatorReducer final : public Reducer {
+class V8_EXPORT_PRIVATE SimplifiedOperatorReducer final
+    : public NON_EXPORTED_BASE(AdvancedReducer) {
  public:
-  explicit SimplifiedOperatorReducer(JSGraph* jsgraph);
+  SimplifiedOperatorReducer(Editor* editor, JSGraph* jsgraph);
   ~SimplifiedOperatorReducer() final;
+
+  const char* reducer_name() const override {
+    return "SimplifiedOperatorReducer";
+  }
 
   Reduction Reduce(Node* node) final;
 
@@ -28,6 +39,7 @@ class SimplifiedOperatorReducer final : public Reducer {
   Reduction ReduceReferenceEqual(Node* node);
 
   Reduction Change(Node* node, const Operator* op, Node* a);
+  Reduction ReplaceBoolean(bool value);
   Reduction ReplaceFloat64(double value);
   Reduction ReplaceInt32(int32_t value);
   Reduction ReplaceUint32(uint32_t value) {
@@ -36,7 +48,9 @@ class SimplifiedOperatorReducer final : public Reducer {
   Reduction ReplaceNumber(double value);
   Reduction ReplaceNumber(int32_t value);
 
+  Factory* factory() const;
   Graph* graph() const;
+  Isolate* isolate() const;
   JSGraph* jsgraph() const { return jsgraph_; }
   MachineOperatorBuilder* machine() const;
   SimplifiedOperatorBuilder* simplified() const;

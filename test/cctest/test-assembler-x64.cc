@@ -32,12 +32,15 @@
 
 #include "src/base/platform/platform.h"
 #include "src/base/utils/random-number-generator.h"
+#include "src/double.h"
 #include "src/factory.h"
 #include "src/macro-assembler.h"
+#include "src/objects-inl.h"
 #include "src/ostreams.h"
 #include "test/cctest/cctest.h"
 
-using namespace v8::internal;
+namespace v8 {
+namespace internal {
 
 // Test the x64 assembler by compiling some simple functions into
 // a buffer and executing them.  These tests do not initialize the
@@ -82,7 +85,7 @@ TEST(AssemblerX64ReturnOperation) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F2>(buffer)(3, 2);
   CHECK_EQ(2, result);
@@ -114,7 +117,7 @@ TEST(AssemblerX64StackOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F2>(buffer)(3, 2);
   CHECK_EQ(2, result);
@@ -136,7 +139,7 @@ TEST(AssemblerX64ArithmeticOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F2>(buffer)(3, 2);
   CHECK_EQ(5, result);
@@ -165,7 +168,7 @@ TEST(AssemblerX64CmpbOperation) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F2>(buffer)(0x1002, 0x2002);
   CHECK_EQ(1, result);
@@ -173,6 +176,22 @@ TEST(AssemblerX64CmpbOperation) {
   CHECK_EQ(0, result);
 }
 
+TEST(Regression684407) {
+  CcTest::InitializeVM();
+  // Allocate an executable page of memory.
+  size_t actual_size;
+  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
+      Assembler::kMinimalBufferSize, &actual_size, true));
+  CHECK(buffer);
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+  Address before = assm.pc();
+  __ cmpl(Operand(arg1, 0),
+          Immediate(0, RelocInfo::WASM_FUNCTION_TABLE_SIZE_REFERENCE));
+  Address after = assm.pc();
+  size_t instruction_size = static_cast<size_t>(after - before);
+  // Check that the immediate is not encoded as uint8.
+  CHECK_LT(sizeof(uint32_t), instruction_size);
+}
 
 TEST(AssemblerX64ImulOperation) {
   CcTest::InitializeVM();
@@ -191,7 +210,7 @@ TEST(AssemblerX64ImulOperation) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F2>(buffer)(3, 2);
   CHECK_EQ(0, result);
@@ -201,6 +220,173 @@ TEST(AssemblerX64ImulOperation) {
   CHECK_EQ(-1, result);
 }
 
+TEST(AssemblerX64testbwqOperation) {
+  CcTest::InitializeVM();
+  v8::HandleScope scope(CcTest::isolate());
+  // Allocate an executable page of memory.
+  size_t actual_size;
+  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
+      Assembler::kMinimalBufferSize, &actual_size, true));
+  CHECK(buffer);
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+
+  __ pushq(rbx);
+  __ pushq(rdi);
+  __ pushq(rsi);
+  __ pushq(r12);
+  __ pushq(r13);
+  __ pushq(r14);
+  __ pushq(r15);
+
+  // Assemble a simple function that tests testb and testw
+  Label bad;
+  Label done;
+
+  // Test immediate testb and testw
+  __ movq(rax, Immediate(2));
+  __ movq(rbx, Immediate(4));
+  __ movq(rcx, Immediate(8));
+  __ movq(rdx, Immediate(16));
+  __ movq(rsi, Immediate(32));
+  __ movq(rdi, Immediate(64));
+  __ movq(r10, Immediate(128));
+  __ movq(r11, Immediate(0));
+  __ movq(r12, Immediate(0));
+  __ movq(r13, Immediate(0));
+  __ testb(rax, Immediate(2));
+  __ j(zero, &bad);
+  __ testb(rbx, Immediate(4));
+  __ j(zero, &bad);
+  __ testb(rcx, Immediate(8));
+  __ j(zero, &bad);
+  __ testb(rdx, Immediate(16));
+  __ j(zero, &bad);
+  __ testb(rsi, Immediate(32));
+  __ j(zero, &bad);
+  __ testb(rdi, Immediate(64));
+  __ j(zero, &bad);
+  __ testb(r10, Immediate(128));
+  __ j(zero, &bad);
+  __ testw(rax, Immediate(2));
+  __ j(zero, &bad);
+  __ testw(rbx, Immediate(4));
+  __ j(zero, &bad);
+  __ testw(rcx, Immediate(8));
+  __ j(zero, &bad);
+  __ testw(rdx, Immediate(16));
+  __ j(zero, &bad);
+  __ testw(rsi, Immediate(32));
+  __ j(zero, &bad);
+  __ testw(rdi, Immediate(64));
+  __ j(zero, &bad);
+  __ testw(r10, Immediate(128));
+  __ j(zero, &bad);
+
+  // Test reg, reg testb and testw
+  __ movq(rax, Immediate(2));
+  __ movq(rbx, Immediate(2));
+  __ testb(rax, rbx);
+  __ j(zero, &bad);
+  __ movq(rbx, Immediate(4));
+  __ movq(rax, Immediate(4));
+  __ testb(rbx, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(8));
+  __ testb(rcx, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(16));
+  __ testb(rdx, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(32));
+  __ testb(rsi, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(64));
+  __ testb(rdi, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(128));
+  __ testb(r10, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(2));
+  __ movq(rbx, Immediate(2));
+  __ testw(rax, rbx);
+  __ j(zero, &bad);
+  __ movq(rbx, Immediate(4));
+  __ movq(rax, Immediate(4));
+  __ testw(rbx, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(8));
+  __ testw(rcx, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(16));
+  __ testw(rdx, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(32));
+  __ testw(rsi, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(64));
+  __ testw(rdi, rax);
+  __ j(zero, &bad);
+  __ movq(rax, Immediate(128));
+  __ testw(r10, rax);
+  __ j(zero, &bad);
+
+  // Test diffrrent extended register coding combinations.
+  __ movq(rax, Immediate(5));
+  __ movq(r11, Immediate(5));
+  __ testb(r11, rax);
+  __ j(zero, &bad);
+  __ testb(rax, r11);
+  __ j(zero, &bad);
+  __ testw(r11, rax);
+  __ j(zero, &bad);
+  __ testw(rax, r11);
+  __ j(zero, &bad);
+  __ movq(r11, Immediate(3));
+  __ movq(r12, Immediate(3));
+  __ movq(rdi, Immediate(3));
+  __ testb(r12, rdi);
+  __ j(zero, &bad);
+  __ testb(rdi, r12);
+  __ j(zero, &bad);
+  __ testb(r12, r11);
+  __ j(zero, &bad);
+  __ testb(r11, r12);
+  __ j(zero, &bad);
+  __ testw(r12, r11);
+  __ j(zero, &bad);
+  __ testw(r11, r12);
+  __ j(zero, &bad);
+
+  // Test sign-extended imediate tests
+  __ movq(r11, Immediate(2));
+  __ shlq(r11, Immediate(32));
+  __ testq(r11, Immediate(-1));
+  __ j(zero, &bad);
+
+  // All tests passed
+  __ movq(rax, Immediate(1));
+  __ jmp(&done);
+
+  __ bind(&bad);
+  __ movq(rax, Immediate(0));
+  __ bind(&done);
+
+  __ popq(r15);
+  __ popq(r14);
+  __ popq(r13);
+  __ popq(r12);
+  __ popq(rsi);
+  __ popq(rdi);
+  __ popq(rbx);
+
+  __ ret(0);
+
+  CodeDesc desc;
+  assm.GetCode(CcTest::i_isolate(), &desc);
+  // Call the function from C++.
+  int result = FUNCTION_CAST<F2>(buffer)(0, 0);
+  CHECK_EQ(1, result);
+}
 
 TEST(AssemblerX64XchglOperations) {
   CcTest::InitializeVM();
@@ -219,7 +405,7 @@ TEST(AssemblerX64XchglOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   uint64_t left = V8_2PART_UINT64_C(0x10000000, 20000000);
   uint64_t right = V8_2PART_UINT64_C(0x30000000, 40000000);
@@ -244,7 +430,7 @@ TEST(AssemblerX64OrlOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   uint64_t left = V8_2PART_UINT64_C(0x10000000, 20000000);
   uint64_t right = V8_2PART_UINT64_C(0x30000000, 40000000);
@@ -268,7 +454,7 @@ TEST(AssemblerX64RollOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   uint64_t src = V8_2PART_UINT64_C(0x10000000, C0000000);
   uint64_t result = FUNCTION_CAST<F5>(buffer)(src);
@@ -290,7 +476,7 @@ TEST(AssemblerX64SublOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   uint64_t left = V8_2PART_UINT64_C(0x10000000, 20000000);
   uint64_t right = V8_2PART_UINT64_C(0x30000000, 40000000);
@@ -320,7 +506,7 @@ TEST(AssemblerX64TestlOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   uint64_t left = V8_2PART_UINT64_C(0x10000000, 20000000);
   uint64_t right = V8_2PART_UINT64_C(0x30000000, 00000000);
@@ -328,6 +514,32 @@ TEST(AssemblerX64TestlOperations) {
   CHECK_EQ(1u, result);
 }
 
+TEST(AssemblerX64TestwOperations) {
+  typedef uint16_t (*F)(uint16_t * x);
+  CcTest::InitializeVM();
+  // Allocate an executable page of memory.
+  size_t actual_size;
+  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
+      Assembler::kMinimalBufferSize, &actual_size, true));
+  CHECK(buffer);
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+
+  // Set rax with the ZF flag of the testl instruction.
+  Label done;
+  __ movq(rax, Immediate(1));
+  __ testw(Operand(arg1, 0), Immediate(0xf0f0));
+  __ j(not_zero, &done, Label::kNear);
+  __ movq(rax, Immediate(0));
+  __ bind(&done);
+  __ ret(0);
+
+  CodeDesc desc;
+  assm.GetCode(CcTest::i_isolate(), &desc);
+  // Call the function from C++.
+  uint16_t operand = 0x8000;
+  uint16_t result = FUNCTION_CAST<F>(buffer)(&operand);
+  CHECK_EQ(1u, result);
+}
 
 TEST(AssemblerX64XorlOperations) {
   CcTest::InitializeVM();
@@ -343,7 +555,7 @@ TEST(AssemblerX64XorlOperations) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   uint64_t left = V8_2PART_UINT64_C(0x10000000, 20000000);
   uint64_t right = V8_2PART_UINT64_C(0x30000000, 60000000);
@@ -380,7 +592,7 @@ TEST(AssemblerX64MemoryOperands) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F2>(buffer)(3, 2);
   CHECK_EQ(3, result);
@@ -409,7 +621,7 @@ TEST(AssemblerX64ControlFlow) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F2>(buffer)(3, 2);
   CHECK_EQ(3, result);
@@ -459,7 +671,7 @@ TEST(AssemblerX64LoopImmediates) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
+  assm.GetCode(CcTest::i_isolate(), &desc);
   // Call the function from C++.
   int result =  FUNCTION_CAST<F0>(buffer)();
   CHECK_EQ(1, result);
@@ -513,7 +725,7 @@ TEST(AssemblerX64LabelChaining) {
   // Test chaining of label usages within instructions (issue 1644).
   CcTest::InitializeVM();
   v8::HandleScope scope(CcTest::isolate());
-  Assembler assm(CcTest::i_isolate(), NULL, 0);
+  Assembler assm(CcTest::i_isolate(), nullptr, 0);
 
   Label target;
   __ j(equal, &target);
@@ -576,9 +788,9 @@ TEST(AssemblerMultiByteNop) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 
   F0 f = FUNCTION_CAST<F0>(code->entry());
   int res = f();
@@ -632,9 +844,9 @@ void DoSSE2(const v8::FunctionCallbackInfo<v8::Value>& args) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 
   F0 f = FUNCTION_CAST<F0>(code->entry());
   int res = f();
@@ -653,7 +865,7 @@ TEST(StackAlignmentForSSE2) {
   global_template->Set(v8_str("do_sse2"),
                        v8::FunctionTemplate::New(isolate, DoSSE2));
 
-  LocalContext env(NULL, global_template);
+  LocalContext env(nullptr, global_template);
   CompileRun(
       "function foo(vec) {"
       "  return do_sse2(vec);"
@@ -695,9 +907,9 @@ TEST(AssemblerX64Extractps) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -733,11 +945,9 @@ TEST(AssemblerX64SSE) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc,
-      Code::ComputeFlags(Code::STUB),
-      Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -961,9 +1171,9 @@ TEST(AssemblerX64FMA_sd) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1187,9 +1397,9 @@ TEST(AssemblerX64FMA_ss) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1262,9 +1472,9 @@ TEST(AssemblerX64SSE_ss) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1347,9 +1557,9 @@ TEST(AssemblerX64AVX_ss) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1586,9 +1796,9 @@ TEST(AssemblerX64AVX_sd) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1778,9 +1988,9 @@ TEST(AssemblerX64BMI1) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1838,9 +2048,9 @@ TEST(AssemblerX64LZCNT) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -1898,9 +2108,9 @@ TEST(AssemblerX64POPCNT) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -2161,9 +2371,9 @@ TEST(AssemblerX64BMI2) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   OFStream os(stdout);
   code->Print(os);
@@ -2206,9 +2416,9 @@ TEST(AssemblerX64JumpTables1) {
   __ ret(0);
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   code->Print(std::cout);
 #endif
@@ -2255,9 +2465,9 @@ TEST(AssemblerX64JumpTables2) {
   }
 
   CodeDesc desc;
-  assm.GetCode(&desc);
-  Handle<Code> code = isolate->factory()->NewCode(
-      desc, Code::ComputeFlags(Code::STUB), Handle<Code>());
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
 #ifdef OBJECT_PRINT
   code->Print(std::cout);
 #endif
@@ -2270,4 +2480,63 @@ TEST(AssemblerX64JumpTables2) {
   }
 }
 
+TEST(AssemblerX64PslldWithXmm15) {
+  CcTest::InitializeVM();
+  // Allocate an executable page of memory.
+  size_t actual_size;
+  byte* buffer = static_cast<byte*>(v8::base::OS::Allocate(
+      Assembler::kMinimalBufferSize, &actual_size, true));
+  CHECK(buffer);
+  Assembler assm(CcTest::i_isolate(), buffer, static_cast<int>(actual_size));
+
+  __ movq(xmm15, arg1);
+  __ pslld(xmm15, 1);
+  __ movq(rax, xmm15);
+  __ ret(0);
+
+  CodeDesc desc;
+  assm.GetCode(CcTest::i_isolate(), &desc);
+  uint64_t result = FUNCTION_CAST<F5>(buffer)(V8_UINT64_C(0x1122334455667788));
+  CHECK_EQ(V8_UINT64_C(0x22446688aaccef10), result);
+}
+
+typedef float (*F9)(float x, float y);
+TEST(AssemblerX64vmovups) {
+  CcTest::InitializeVM();
+  if (!CpuFeatures::IsSupported(AVX)) return;
+
+  Isolate* isolate = reinterpret_cast<Isolate*>(CcTest::isolate());
+  HandleScope scope(isolate);
+  v8::internal::byte buffer[256];
+  MacroAssembler assm(isolate, buffer, sizeof(buffer),
+                      v8::internal::CodeObjectRequired::kYes);
+  {
+    CpuFeatureScope avx_scope(&assm, AVX);
+    __ shufps(xmm0, xmm0, 0x0);  // brocast first argument
+    __ shufps(xmm1, xmm1, 0x0);  // brocast second argument
+    // copy xmm1 to xmm0 through the stack to test the "vmovups reg, mem".
+    __ subq(rsp, Immediate(kSimd128Size));
+    __ vmovups(Operand(rsp, 0), xmm1);
+    __ vmovups(xmm0, Operand(rsp, 0));
+    __ addq(rsp, Immediate(kSimd128Size));
+
+    __ ret(0);
+  }
+
+  CodeDesc desc;
+  assm.GetCode(isolate, &desc);
+  Handle<Code> code =
+      isolate->factory()->NewCode(desc, Code::STUB, Handle<Code>());
+#ifdef OBJECT_PRINT
+  OFStream os(stdout);
+  code->Print(os);
+#endif
+
+  F9 f = FUNCTION_CAST<F9>(code->entry());
+  CHECK_EQ(-1.5, f(1.5, -1.5));
+}
+
 #undef __
+
+}  // namespace internal
+}  // namespace v8

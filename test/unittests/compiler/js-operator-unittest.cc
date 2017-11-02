@@ -11,6 +11,7 @@
 namespace v8 {
 namespace internal {
 namespace compiler {
+namespace js_operator_unittest {
 
 // -----------------------------------------------------------------------------
 // Shared operators.
@@ -40,25 +41,11 @@ const SharedOperator kSharedOperators[] = {
         control_input_count, value_output_count, effect_output_count,        \
         control_output_count                                                 \
   }
-    SHARED(Equal, Operator::kNoProperties, 2, 1, 1, 1, 1, 1, 2),
-    SHARED(NotEqual, Operator::kNoProperties, 2, 1, 1, 1, 1, 1, 2),
-    SHARED(StrictEqual, Operator::kNoThrow, 2, 0, 1, 1, 1, 1, 0),
-    SHARED(StrictNotEqual, Operator::kNoThrow, 2, 0, 1, 1, 1, 1, 0),
-    SHARED(LessThan, Operator::kNoProperties, 2, 2, 1, 1, 1, 1, 2),
-    SHARED(GreaterThan, Operator::kNoProperties, 2, 2, 1, 1, 1, 1, 2),
-    SHARED(LessThanOrEqual, Operator::kNoProperties, 2, 2, 1, 1, 1, 1, 2),
-    SHARED(GreaterThanOrEqual, Operator::kNoProperties, 2, 2, 1, 1, 1, 1, 2),
     SHARED(ToNumber, Operator::kNoProperties, 1, 1, 1, 1, 1, 1, 2),
     SHARED(ToString, Operator::kNoProperties, 1, 1, 1, 1, 1, 1, 2),
     SHARED(ToName, Operator::kNoProperties, 1, 1, 1, 1, 1, 1, 2),
-    SHARED(ToObject, Operator::kNoProperties, 1, 1, 1, 1, 1, 1, 2),
-    SHARED(Yield, Operator::kNoProperties, 1, 0, 1, 1, 1, 1, 2),
-    SHARED(Create, Operator::kEliminatable, 2, 1, 1, 0, 1, 1, 0),
-    SHARED(HasProperty, Operator::kNoProperties, 2, 1, 1, 1, 1, 1, 2),
-    SHARED(TypeOf, Operator::kEliminatable, 1, 0, 1, 0, 1, 1, 0),
-    SHARED(InstanceOf, Operator::kNoProperties, 2, 1, 1, 1, 1, 1, 2),
-    SHARED(CreateWithContext, Operator::kNoProperties, 2, 0, 1, 1, 1, 1, 2),
-    SHARED(CreateModuleContext, Operator::kNoProperties, 2, 0, 1, 1, 1, 1, 2),
+    SHARED(ToObject, Operator::kFoldable, 1, 1, 1, 1, 1, 1, 2),
+    SHARED(Create, Operator::kNoProperties, 2, 1, 1, 1, 1, 1, 2),
 #undef SHARED
 };
 
@@ -125,6 +112,7 @@ TEST_P(JSSharedOperatorTest, Properties) {
 INSTANTIATE_TEST_CASE_P(JSOperatorTest, JSSharedOperatorTest,
                         ::testing::ValuesIn(kSharedOperators));
 
+}  // namespace js_operator_unittest
 }  // namespace compiler
 }  // namespace internal
 }  // namespace v8

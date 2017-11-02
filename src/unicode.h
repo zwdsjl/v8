@@ -127,8 +127,7 @@ class Utf16 {
   }
 };
 
-
-class Utf8 {
+class V8_EXPORT_PRIVATE Utf8 {
  public:
   static inline uchar Length(uchar chr, int previous);
   static inline unsigned EncodeOneByte(char* out, uint8_t c);
@@ -141,6 +140,8 @@ class Utf8 {
   // The unicode replacement character, used to signal invalid unicode
   // sequences (e.g. an orphan surrogate) when converting to a UTF-8 encoding.
   static const uchar kBadChar = 0xFFFD;
+  static const uchar kBufferEmpty = 0x0;
+  static const uchar kIncomplete = 0xFFFFFFFC;  // any non-valid code point.
   static const unsigned kMaxEncodedSize   = 4;
   static const unsigned kMaxOneByteChar   = 0x7f;
   static const unsigned kMaxTwoByteChar   = 0x7ff;
@@ -155,29 +156,52 @@ class Utf8 {
   // UTF-8.
   static const unsigned kMax16BitCodeUnitSize  = 3;
   static inline uchar ValueOf(const byte* str, size_t length, size_t* cursor);
+
+  typedef uint32_t Utf8IncrementalBuffer;
+  static uchar ValueOfIncremental(byte next_byte,
+                                  Utf8IncrementalBuffer* buffer);
+  static uchar ValueOfIncrementalFinish(Utf8IncrementalBuffer* buffer);
+
+  // Excludes non-characters from the set of valid code points.
+  static inline bool IsValidCharacter(uchar c);
+
+  // Validate if the input has a valid utf-8 encoding. Unlike JS source code
+  // this validation function will accept any unicode code point, including
+  // kBadChar and BOMs.
+  //
+  // This method checks for:
+  // - valid utf-8 endcoding (e.g. no over-long encodings),
+  // - absence of surrogates,
+  // - valid code point range.
+  static bool ValidateEncoding(const byte* str, size_t length);
 };
 
 struct Uppercase {
   static bool Is(uchar c);
 };
-struct Lowercase {
-  static bool Is(uchar c);
-};
 struct Letter {
   static bool Is(uchar c);
 };
-struct ID_Start {
+#ifndef V8_INTL_SUPPORT
+struct V8_EXPORT_PRIVATE ID_Start {
   static bool Is(uchar c);
 };
-struct ID_Continue {
+struct V8_EXPORT_PRIVATE ID_Continue {
   static bool Is(uchar c);
 };
-struct WhiteSpace {
+struct V8_EXPORT_PRIVATE WhiteSpace {
   static bool Is(uchar c);
 };
-struct LineTerminator {
-  static bool Is(uchar c);
-};
+#endif  // !V8_INTL_SUPPORT
+
+// LineTerminator:       'JS_Line_Terminator' in point.properties
+// ES#sec-line-terminators lists exactly 4 code points:
+// LF (U+000A), CR (U+000D), LS(U+2028), PS(U+2029)
+V8_INLINE bool IsLineTerminator(uchar c) {
+  return c == 0x000A || c == 0x000D || c == 0x2028 || c == 0x2029;
+}
+
+#ifndef V8_INTL_SUPPORT
 struct ToLowercase {
   static const int kMaxWidth = 3;
   static const bool kIsToLower = true;
@@ -194,6 +218,7 @@ struct ToUppercase {
                      uchar* result,
                      bool* allow_caching_ptr);
 };
+#endif
 struct Ecma262Canonicalize {
   static const int kMaxWidth = 1;
   static int Convert(uchar c,
